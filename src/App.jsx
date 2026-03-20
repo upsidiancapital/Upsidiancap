@@ -463,9 +463,19 @@ function ResidentApp({ user, onLogout, onUserUpdate }) {
 
   const createInvite = async () => {
     setInviteErr("");
-    const { guestName, date, timeFrom, timeTo } = inviteForm;
-    if (!guestName || !date || !timeFrom || !timeTo) return setInviteErr("Guest name, date, arrival and expiry time are required.");
+    const { guestName, day, month, year, fromHour, fromMin, toHour, toMin } = inviteForm;
+    if (!guestName || !day || !month || !year || fromHour === "" || fromMin === "" || toHour === "" || toMin === "")
+      return setInviteErr("Guest name, date, arrival and expiry time are all required.");
+    const date     = year + "-" + month + "-" + day;
+    const timeFrom = fromHour + ":" + fromMin;
+    const timeTo   = toHour + ":" + toMin;
     if (timeFrom >= timeTo) return setInviteErr("Expiry time must be after arrival time.");
+    // Reject if the selected date is in the past (Nigeria time)
+    const today = nowNigeria();
+    const todayStr = today.getFullYear() + "-" +
+      String(today.getMonth()+1).padStart(2,"0") + "-" +
+      String(today.getDate()).padStart(2,"0");
+    if (date < todayStr) return setInviteErr("Visit date cannot be in the past.");
 
     const resident  = RESIDENTS.find((r) => r.id === Number(inviteForm.residentId));
     const newInvite = {
@@ -489,10 +499,33 @@ function ResidentApp({ user, onLogout, onUserUpdate }) {
     const updated = [newInvite, ...stored];
     await storageSet(INVITES_KEY + "_" + user.estateId, updated);
     setInvites(updated);
-    setInviteForm({ guestName:"", guestPhone:"", purpose:"", date:"", timeFrom:"", timeTo:"", residentId:1 });
+    setInviteForm({ guestName:"", guestPhone:"", purpose:"", day:"", month:"", year:"", fromHour:"", fromMin:"", toHour:"", toMin:"", residentId:1 });
   };
 
   const myInvites = invites.filter((i) => i.createdBy === user.email);
+
+  // Hidden invite ids (resident) — persisted in localStorage per user
+  const hiddenKey = "upsidian_hidden_" + user.email;
+  const [hiddenIds, setHiddenIds] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(hiddenKey) || "[]"); } catch { return []; }
+  });
+  const hideInvite = (id) => {
+    const next = [...hiddenIds, id];
+    setHiddenIds(next);
+    try { localStorage.setItem(hiddenKey, JSON.stringify(next)); } catch {}
+  };
+  const unhideAll = () => {
+    setHiddenIds([]);
+    try { localStorage.removeItem(hiddenKey); } catch {}
+  };
+
+  // Delete invite (removes from shared store entirely)
+  const deleteInvite = async (id) => {
+    const stored  = await storageGet(INVITES_KEY + "_" + user.estateId) || [];
+    const updated = stored.filter((i) => i.id !== id);
+    await storageSet(INVITES_KEY + "_" + user.estateId, updated);
+    setInvites(updated);
+  };
 
   // Badge colour based on invite state
   const inviteBadge = (inv) => {
@@ -507,6 +540,7 @@ function ResidentApp({ user, onLogout, onUserUpdate }) {
 
   const InviteCard = ({ inv }) => {
     const { style: badgeStyle, label: badgeLabel } = inviteBadge(inv);
+    const [confirmDelete, setConfirmDelete] = useState(false);
     return (
       <div style={c.itemCard}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 }}>
@@ -523,6 +557,45 @@ function ResidentApp({ user, onLogout, onUserUpdate }) {
           <div style={{ fontSize:10, color:"#333", letterSpacing:1.5, textTransform:"uppercase", marginBottom:4 }}>Access Code</div>
           <div style={{ fontSize:24, fontWeight:800, letterSpacing:6, color:"#fff" }}>{inv.code}</div>
         </div>
+
+        {/* Normal action row */}
+        {!confirmDelete && (
+          <div style={{ display:"flex", gap:8, marginTop:10 }}>
+            <button
+              onClick={() => hideInvite(inv.id)}
+              style={{ flex:1, background:"#1a1a1a", border:"1px solid #2a2a2a", color:"#555", borderRadius:8, padding:"7px 0", fontSize:11, cursor:"pointer", letterSpacing:0.5 }}
+            >
+              Hide
+            </button>
+            <button
+              onClick={() => setConfirmDelete(true)}
+              style={{ flex:1, background:"#1a0a0a", border:"1px solid #3d1515", color:"#ff6b6b", borderRadius:8, padding:"7px 0", fontSize:11, cursor:"pointer", letterSpacing:0.5 }}
+            >
+              Delete
+            </button>
+          </div>
+        )}
+
+        {/* Inline confirm row */}
+        {confirmDelete && (
+          <div style={{ marginTop:10, background:"#1a0a0a", border:"1px solid #3d1515", borderRadius:8, padding:"10px 12px" }}>
+            <div style={{ fontSize:12, color:"#ff6b6b", marginBottom:8 }}>Delete this invite? The code will stop working immediately.</div>
+            <div style={{ display:"flex", gap:8 }}>
+              <button
+                onClick={() => setConfirmDelete(false)}
+                style={{ flex:1, background:"#1a1a1a", border:"1px solid #2a2a2a", color:"#555", borderRadius:8, padding:"7px 0", fontSize:11, cursor:"pointer" }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => deleteInvite(inv.id)}
+                style={{ flex:1, background:"#3d1515", border:"1px solid #ff6b6b", color:"#ff6b6b", borderRadius:8, padding:"7px 0", fontSize:12, fontWeight:700, cursor:"pointer" }}
+              >
+                Yes, Delete
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     );
   };
@@ -582,7 +655,7 @@ function ResidentApp({ user, onLogout, onUserUpdate }) {
               ) : myInvites.length === 0 ? (
                 <div style={{ color:"#2a2a2a", fontSize:13, padding:"12px 0" }}>No invites yet. Head to the Invite tab.</div>
               ) : (
-                myInvites.slice(0, 3).map((inv) => <InviteCard key={inv.id} inv={inv} />)
+                myInvites.filter((i) => !hiddenIds.includes(i.id)).slice(0, 3).map((inv) => <InviteCard key={inv.id} inv={inv} />)
               )}
             </div>
           </div>
@@ -612,71 +685,123 @@ function ResidentApp({ user, onLogout, onUserUpdate }) {
               </div>
             ))}
 
-            {/* Date — custom selects (native date/time pickers blocked in sandboxed iframe) */}
-            <label style={c.label}>Visit Date</label>
-            <div style={{ display:"flex", gap:8, marginBottom:14 }}>
-              <select value={inviteForm.day} onChange={(e) => setInviteForm({ ...inviteForm, day: e.target.value })}
-                style={{ ...c.select, marginBottom:0, flex:1 }}>
-                <option value="">Day</option>
-                {Array.from({length:31},(_,i)=>i+1).map(d=>(
-                  <option key={d} value={String(d).padStart(2,"0")}>{d}</option>
-                ))}
-              </select>
-              <select value={inviteForm.month} onChange={(e) => setInviteForm({ ...inviteForm, month: e.target.value })}
-                style={{ ...c.select, marginBottom:0, flex:2 }}>
-                <option value="">Month</option>
-                {["January","February","March","April","May","June","July","August","September","October","November","December"].map((m,i)=>(
-                  <option key={i} value={String(i+1).padStart(2,"0")}>{m}</option>
-                ))}
-              </select>
-              <select value={inviteForm.year} onChange={(e) => setInviteForm({ ...inviteForm, year: e.target.value })}
-                style={{ ...c.select, marginBottom:0, flex:1 }}>
-                <option value="">Year</option>
-                {[2025,2026,2027].map(y=>(
-                  <option key={y} value={String(y)}>{y}</option>
-                ))}
-              </select>
-            </div>
+            {/* Date — three selects, past dates disabled */}
+            {(()=>{
+              const today    = nowNigeria();
+              const todayY   = today.getFullYear();
+              const todayM   = today.getMonth() + 1; // 1-indexed
+              const todayD   = today.getDate();
+              const selY     = Number(inviteForm.year)  || 0;
+              const selM     = Number(inviteForm.month) || 0;
+              // How many days in the selected month/year
+              const daysInMonth = selY && selM ? new Date(selY, selM, 0).getDate() : 31;
+              // Years: current year up to 2 years ahead
+              const years = Array.from({length:3},(_,i)=> todayY + i);
+              return (
+                <div>
+                  <label style={c.label}>Visit Date</label>
+                  <div style={{ display:"flex", gap:8, marginBottom:14 }}>
+                    {/* Year */}
+                    <select
+                      value={inviteForm.year}
+                      onChange={(e) => setInviteForm({ ...inviteForm, year: e.target.value, month:"", day:"" })}
+                      style={{ flex:1, padding:"12px 8px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontSize:14, color: inviteForm.year ? "#fff" : "#555" }}
+                    >
+                      <option value="">Year</option>
+                      {years.map(y=>(
+                        <option key={y} value={String(y)}>{y}</option>
+                      ))}
+                    </select>
+                    {/* Month — disable months before today if same year */}
+                    <select
+                      value={inviteForm.month}
+                      onChange={(e) => setInviteForm({ ...inviteForm, month: e.target.value, day:"" })}
+                      style={{ flex:2, padding:"12px 8px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontSize:14, color: inviteForm.month ? "#fff" : "#555" }}
+                    >
+                      <option value="">Month</option>
+                      {["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"].map((m,i)=>{
+                        const mNum = i + 1;
+                        const isPast = selY === todayY && mNum < todayM;
+                        const val   = String(mNum).padStart(2,"0");
+                        return <option key={val} value={val} disabled={isPast}>{m}</option>;
+                      })}
+                    </select>
+                    {/* Day — disable days before today if same year+month */}
+                    <select
+                      value={inviteForm.day}
+                      onChange={(e) => setInviteForm({ ...inviteForm, day: e.target.value })}
+                      style={{ flex:1, padding:"12px 8px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontSize:14, color: inviteForm.day ? "#fff" : "#555" }}
+                    >
+                      <option value="">Day</option>
+                      {Array.from({length: daysInMonth},(_,i)=>{
+                        const dNum  = i + 1;
+                        const isPast = selY === todayY && selM === todayM && dNum < todayD;
+                        const val   = String(dNum).padStart(2,"0");
+                        return <option key={val} value={val} disabled={isPast}>{dNum}</option>;
+                      })}
+                    </select>
+                  </div>
+                </div>
+              );
+            })()}
 
-            {/* Time window */}
-            <label style={c.label}>Arrival Time (Nigeria)</label>
-            <div style={{ display:"flex", gap:8, marginBottom:14 }}>
-              <select value={inviteForm.fromHour} onChange={(e) => setInviteForm({ ...inviteForm, fromHour: e.target.value })}
-                style={{ ...c.select, marginBottom:0, flex:1 }}>
+            {/* Arrival time */}
+            <label style={c.label}>Arrival Time — Nigeria (WAT)</label>
+            <div style={{ display:"flex", gap:8, marginBottom:14, alignItems:"center" }}>
+              <select
+                value={inviteForm.fromHour}
+                onChange={(e) => setInviteForm({ ...inviteForm, fromHour: e.target.value })}
+                style={{ flex:1, padding:"12px 8px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontSize:14, color: inviteForm.fromHour ? "#fff" : "#555" }}
+              >
                 <option value="">Hour</option>
-                {Array.from({length:24},(_,i)=>i).map(h=>(
-                  <option key={h} value={String(h).padStart(2,"0")}>{String(h).padStart(2,"0")}</option>
-                ))}
+                {Array.from({length:24},(_,i)=>{
+                  const h = String(i).padStart(2,"0");
+                  return <option key={h} value={h}>{h}</option>;
+                })}
               </select>
-              <select value={inviteForm.fromMin} onChange={(e) => setInviteForm({ ...inviteForm, fromMin: e.target.value })}
-                style={{ ...c.select, marginBottom:0, flex:1 }}>
+              <span style={{ color:"#444", fontSize:18, fontWeight:700 }}>:</span>
+              <select
+                value={inviteForm.fromMin}
+                onChange={(e) => setInviteForm({ ...inviteForm, fromMin: e.target.value })}
+                style={{ flex:1, padding:"12px 8px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontSize:14, color: inviteForm.fromMin ? "#fff" : "#555" }}
+              >
                 <option value="">Min</option>
-                {["00","15","30","45"].map(m=>(
-                  <option key={m} value={m}>{m}</option>
-                ))}
+                <option value="00">00</option>
+                <option value="15">15</option>
+                <option value="30">30</option>
+                <option value="45">45</option>
               </select>
             </div>
 
-            <label style={c.label}>Code Expires At (Nigeria)</label>
-            <div style={{ display:"flex", gap:8, marginBottom:14 }}>
-              <select value={inviteForm.toHour} onChange={(e) => setInviteForm({ ...inviteForm, toHour: e.target.value })}
-                style={{ ...c.select, marginBottom:0, flex:1 }}>
+            {/* Expiry time */}
+            <label style={c.label}>Expiry Time — Nigeria (WAT)</label>
+            <div style={{ display:"flex", gap:8, marginBottom:6, alignItems:"center" }}>
+              <select
+                value={inviteForm.toHour}
+                onChange={(e) => setInviteForm({ ...inviteForm, toHour: e.target.value })}
+                style={{ flex:1, padding:"12px 8px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontSize:14, color: inviteForm.toHour ? "#fff" : "#555" }}
+              >
                 <option value="">Hour</option>
-                {Array.from({length:24},(_,i)=>i).map(h=>(
-                  <option key={h} value={String(h).padStart(2,"0")}>{String(h).padStart(2,"0")}</option>
-                ))}
+                {Array.from({length:24},(_,i)=>{
+                  const h = String(i).padStart(2,"0");
+                  return <option key={h} value={h}>{h}</option>;
+                })}
               </select>
-              <select value={inviteForm.toMin} onChange={(e) => setInviteForm({ ...inviteForm, toMin: e.target.value })}
-                style={{ ...c.select, marginBottom:0, flex:1 }}>
+              <span style={{ color:"#444", fontSize:18, fontWeight:700 }}>:</span>
+              <select
+                value={inviteForm.toMin}
+                onChange={(e) => setInviteForm({ ...inviteForm, toMin: e.target.value })}
+                style={{ flex:1, padding:"12px 8px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontSize:14, color: inviteForm.toMin ? "#fff" : "#555" }}
+              >
                 <option value="">Min</option>
-                {["00","15","30","45"].map(m=>(
-                  <option key={m} value={m}>{m}</option>
-                ))}
+                <option value="00">00</option>
+                <option value="15">15</option>
+                <option value="30">30</option>
+                <option value="45">45</option>
               </select>
             </div>
-
-            <div style={{ fontSize:11, color:"#333", marginTop:-8, marginBottom:16, lineHeight:1.6 }}>
-              The visitor can only use this code within the time window you set. After the expiry time the code will be rejected at the gate.
+            <div style={{ fontSize:11, color:"#333", marginBottom:16, lineHeight:1.6 }}>
+              Your visitor can only check in within this time window on the selected date. The gate will reject the code outside these hours.
             </div>
 
             {/* Resident */}
@@ -692,13 +817,25 @@ function ResidentApp({ user, onLogout, onUserUpdate }) {
             <button style={c.btnApp} onClick={createInvite}>Generate Invite Code &rarr;</button>
 
             <div style={{ marginTop:28 }}>
-              <div style={c.section}>Your Invites</div>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
+                <div style={c.section}>Your Invites</div>
+                {hiddenIds.length > 0 && (
+                  <button onClick={unhideAll} style={{ background:"none", border:"none", color:"#555", fontSize:11, cursor:"pointer", letterSpacing:0.5, textDecoration:"underline" }}>
+                    Show {hiddenIds.length} hidden
+                  </button>
+                )}
+              </div>
               {loadingInvites ? (
                 <div style={{ color:"#2a2a2a", fontSize:13 }}>Loading...</div>
-              ) : myInvites.length === 0 ? (
-                <div style={{ color:"#2a2a2a", fontSize:13 }}>No invites yet.</div>
+              ) : myInvites.filter((i) => !hiddenIds.includes(i.id)).length === 0 ? (
+                <div style={{ color:"#2a2a2a", fontSize:13 }}>
+                  No invites to show.{" "}
+                  {hiddenIds.length > 0 && (
+                    <button onClick={unhideAll} style={{ background:"none", border:"none", color:"#555", fontSize:11, cursor:"pointer", textDecoration:"underline" }}>Show hidden</button>
+                  )}
+                </div>
               ) : (
-                myInvites.map((inv) => <InviteCard key={inv.id} inv={inv} />)
+                myInvites.filter((i) => !hiddenIds.includes(i.id)).map((inv) => <InviteCard key={inv.id} inv={inv} />)
               )}
             </div>
           </div>
@@ -841,13 +978,36 @@ function SecurityAppWithProfile({ user, onLogout, onUserUpdate }) {
   const [gateResult, setGateResult] = useState(null);
   const [accessLog, setAccessLog]   = useState([]);
   const [loading, setLoading]       = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
-  useEffect(() => {
-    (async () => {
-      const log = await storageGet(LOG_KEY + "_" + user.estateId) || [];
-      setAccessLog(log);
-    })();
-  }, [user.estateId]);
+  // Hidden log entry ids for security — persisted per user
+  const secHiddenKey = "upsidian_sec_hidden_" + user.email;
+  const [hiddenLogIds, setHiddenLogIds] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(secHiddenKey) || "[]"); } catch { return []; }
+  });
+  const hideLog = (id) => {
+    const next = [...hiddenLogIds, id];
+    setHiddenLogIds(next);
+    try { localStorage.setItem(secHiddenKey, JSON.stringify(next)); } catch {}
+  };
+  const unhideAllLogs = () => {
+    setHiddenLogIds([]);
+    try { localStorage.removeItem(secHiddenKey); } catch {}
+  };
+
+  const loadLog = async () => {
+    const log = await storageGet(LOG_KEY + "_" + user.estateId) || [];
+    setAccessLog(log);
+  };
+
+  useEffect(() => { loadLog(); }, [user.estateId]);
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    setGateResult(null);
+    await loadLog();
+    setTimeout(() => setRefreshing(false), 600);
+  };
 
   const verify = async () => {
     if (!gateCode.trim()) return;
@@ -963,15 +1123,43 @@ function SecurityAppWithProfile({ user, onLogout, onUserUpdate }) {
               )}
             </div>
 
-            <div style={c.section}>Today's Access Log</div>
-            {accessLog.length === 0 ? (
-              <div style={{ color:"#2a2a2a", fontSize:13, padding:"12px 0" }}>No check-ins yet.</div>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
+              <div style={c.section}>Today's Access Log</div>
+              <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                {hiddenLogIds.length > 0 && (
+                  <button onClick={unhideAllLogs} style={{ background:"none", border:"none", color:"#555", fontSize:11, cursor:"pointer", textDecoration:"underline", letterSpacing:0.5 }}>
+                    Show {hiddenLogIds.length} hidden
+                  </button>
+                )}
+                <button
+                  onClick={handleRefresh}
+                  style={{ background:"#1a1a1a", border:"1px solid #2a2a2a", color: refreshing ? "#444" : "#888", borderRadius:8, padding:"5px 12px", fontSize:11, cursor:"pointer", letterSpacing:0.5, transition:"color 0.2s" }}
+                >
+                  {refreshing ? "Refreshing..." : "Refresh"}
+                </button>
+              </div>
+            </div>
+            {accessLog.filter((l) => !hiddenLogIds.includes(l.id)).length === 0 ? (
+              <div style={{ color:"#2a2a2a", fontSize:13, padding:"12px 0" }}>
+                No check-ins to show.{" "}
+                {hiddenLogIds.length > 0 && (
+                  <button onClick={unhideAllLogs} style={{ background:"none", border:"none", color:"#555", fontSize:11, cursor:"pointer", textDecoration:"underline" }}>Show hidden</button>
+                )}
+              </div>
             ) : (
-              accessLog.map((log) => (
+              accessLog.filter((l) => !hiddenLogIds.includes(l.id)).map((log) => (
                 <div key={log.id} style={{ background:"#141414", border:"1px solid #1e1e1e", borderRadius:10, padding:12, marginBottom:8, fontSize:13 }}>
                   <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
                     <strong style={{ color:"#e0e0e0" }}>{log.guest}</strong>
-                    <span style={{ color:"#6bff6b", fontSize:11 }}>{log.action}</span>
+                    <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                      <span style={{ color:"#6bff6b", fontSize:11 }}>{log.action}</span>
+                      <button
+                        onClick={() => hideLog(log.id)}
+                        style={{ background:"none", border:"none", color:"#333", fontSize:10, cursor:"pointer", letterSpacing:0.5 }}
+                      >
+                        Hide
+                      </button>
+                    </div>
                   </div>
                   <div style={{ color:"#444" }}>{log.resident} &middot; {log.unit}</div>
                   <div style={{ color:"#2a2a2a", fontSize:11, marginTop:3 }}>{log.time}</div>
