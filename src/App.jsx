@@ -446,7 +446,10 @@ function ResidentApp({ user, onLogout, onUserUpdate }) {
   const [invites, setInvites]   = useState([]);
   const [loadingInvites, setLoadingInvites] = useState(true);
   const [inviteForm, setInviteForm] = useState({
-    guestName:"", guestPhone:"", purpose:"", date:"", timeFrom:"", timeTo:"", residentId:1,
+    guestName:"", guestPhone:"", purpose:"",
+    day:"", month:"", year:"",
+    fromHour:"", fromMin:"", toHour:"", toMin:"",
+    residentId:1,
   });
   const [inviteErr, setInviteErr] = useState("");
 
@@ -609,22 +612,68 @@ function ResidentApp({ user, onLogout, onUserUpdate }) {
               </div>
             ))}
 
-            {/* Date */}
+            {/* Date — custom selects (native date/time pickers blocked in sandboxed iframe) */}
             <label style={c.label}>Visit Date</label>
-            <input type="date" value={inviteForm.date}
-              onChange={(e) => setInviteForm({ ...inviteForm, date: e.target.value })}
-              style={c.appInput} />
+            <div style={{ display:"flex", gap:8, marginBottom:14 }}>
+              <select value={inviteForm.day} onChange={(e) => setInviteForm({ ...inviteForm, day: e.target.value })}
+                style={{ ...c.select, marginBottom:0, flex:1 }}>
+                <option value="">Day</option>
+                {Array.from({length:31},(_,i)=>i+1).map(d=>(
+                  <option key={d} value={String(d).padStart(2,"0")}>{d}</option>
+                ))}
+              </select>
+              <select value={inviteForm.month} onChange={(e) => setInviteForm({ ...inviteForm, month: e.target.value })}
+                style={{ ...c.select, marginBottom:0, flex:2 }}>
+                <option value="">Month</option>
+                {["January","February","March","April","May","June","July","August","September","October","November","December"].map((m,i)=>(
+                  <option key={i} value={String(i+1).padStart(2,"0")}>{m}</option>
+                ))}
+              </select>
+              <select value={inviteForm.year} onChange={(e) => setInviteForm({ ...inviteForm, year: e.target.value })}
+                style={{ ...c.select, marginBottom:0, flex:1 }}>
+                <option value="">Year</option>
+                {[2025,2026,2027].map(y=>(
+                  <option key={y} value={String(y)}>{y}</option>
+                ))}
+              </select>
+            </div>
 
             {/* Time window */}
             <label style={c.label}>Arrival Time (Nigeria)</label>
-            <input type="time" value={inviteForm.timeFrom}
-              onChange={(e) => setInviteForm({ ...inviteForm, timeFrom: e.target.value })}
-              style={c.appInput} />
+            <div style={{ display:"flex", gap:8, marginBottom:14 }}>
+              <select value={inviteForm.fromHour} onChange={(e) => setInviteForm({ ...inviteForm, fromHour: e.target.value })}
+                style={{ ...c.select, marginBottom:0, flex:1 }}>
+                <option value="">Hour</option>
+                {Array.from({length:24},(_,i)=>i).map(h=>(
+                  <option key={h} value={String(h).padStart(2,"0")}>{String(h).padStart(2,"0")}</option>
+                ))}
+              </select>
+              <select value={inviteForm.fromMin} onChange={(e) => setInviteForm({ ...inviteForm, fromMin: e.target.value })}
+                style={{ ...c.select, marginBottom:0, flex:1 }}>
+                <option value="">Min</option>
+                {["00","15","30","45"].map(m=>(
+                  <option key={m} value={m}>{m}</option>
+                ))}
+              </select>
+            </div>
 
             <label style={c.label}>Code Expires At (Nigeria)</label>
-            <input type="time" value={inviteForm.timeTo}
-              onChange={(e) => setInviteForm({ ...inviteForm, timeTo: e.target.value })}
-              style={c.appInput} />
+            <div style={{ display:"flex", gap:8, marginBottom:14 }}>
+              <select value={inviteForm.toHour} onChange={(e) => setInviteForm({ ...inviteForm, toHour: e.target.value })}
+                style={{ ...c.select, marginBottom:0, flex:1 }}>
+                <option value="">Hour</option>
+                {Array.from({length:24},(_,i)=>i).map(h=>(
+                  <option key={h} value={String(h).padStart(2,"0")}>{String(h).padStart(2,"0")}</option>
+                ))}
+              </select>
+              <select value={inviteForm.toMin} onChange={(e) => setInviteForm({ ...inviteForm, toMin: e.target.value })}
+                style={{ ...c.select, marginBottom:0, flex:1 }}>
+                <option value="">Min</option>
+                {["00","15","30","45"].map(m=>(
+                  <option key={m} value={m}>{m}</option>
+                ))}
+              </select>
+            </div>
 
             <div style={{ fontSize:11, color:"#333", marginTop:-8, marginBottom:16, lineHeight:1.6 }}>
               The visitor can only use this code within the time window you set. After the expiry time the code will be rejected at the gate.
