@@ -71,13 +71,24 @@ const USERS_KEY   = "upsidian_users";
 const LOG_KEY     = "upsidian_log";
 
 async function storageGet(key) {
+  // Try window.storage (cross-device), fall back to localStorage (same-device)
   try {
     const res = await window.storage.get(key, true);
-    return res ? JSON.parse(res.value) : null;
-  } catch { return null; }
+    if (res && res.value) return JSON.parse(res.value);
+  } catch {}
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw) return JSON.parse(raw);
+  } catch {}
+  return null;
 }
+
 async function storageSet(key, value) {
-  try { await window.storage.set(key, JSON.stringify(value), true); } catch {}
+  const serialized = JSON.stringify(value);
+  // localStorage first — synchronous and reliable, never silently fails
+  try { localStorage.setItem(key, serialized); } catch(e) { console.error('localStorage write failed', e); }
+  // Also write to window.storage for cross-device sync
+  try { await window.storage.set(key, serialized, true); } catch {}
 }
 
 // ─── Shared styles ────────────────────────────────────────────────────────────
@@ -195,7 +206,12 @@ function AuthScreen({ onLogin }) {
     ];
     if (allEmails.includes(form.email)) return setError("Email already registered.");
     const newUser = { email:form.email, password:form.password, name:form.name, estateId:form.estateId, role };
-    await storageSet(USERS_KEY, [...stored, newUser]);
+    const updatedUsers = [...stored, newUser];
+    await storageSet(USERS_KEY, updatedUsers);
+    // Verify the write stuck before telling the user it worked
+    const verify = await storageGet(USERS_KEY);
+    const saved = verify && verify.find((u) => u.email === form.email);
+    if (!saved) return setError("Sign-up failed — could not save your account. Please try again.");
     setSuccess("Account created! Registered to " + estate.name + " as " + (role === "security" ? "Security" : "Resident") + ".");
     setMode("login");
     setForm({ name:"", email:form.email, password:"", confirm:"", estateId:"", estateCode:"", adminCode:"" });
