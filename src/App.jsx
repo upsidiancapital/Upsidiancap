@@ -152,7 +152,7 @@ const c = {
 function AuthScreen({ onLogin }) {
   const [mode, setMode]   = useState("login");
   const [role, setRole]   = useState("resident");
-  const [form, setForm]   = useState({ name:"", email:"", password:"", confirm:"", estateId:"", estateCode:"" });
+  const [form, setForm]   = useState({ name:"", email:"", password:"", confirm:"", estateId:"", estateCode:"", adminCode:"" });
   const [error, setError]     = useState("");
   const [success, setSuccess] = useState("");
 
@@ -163,8 +163,12 @@ function AuthScreen({ onLogin }) {
   const handleLogin = async () => {
     setError("");
     const stored = await storageGet(USERS_KEY) || [];
-    const all    = [...SEED_USERS, ...stored];
-    const found  = all.find((u) => u.email === form.email && u.password === form.password);
+    // stored users take priority over seeds (handles password updates + new signups)
+    const all = [
+      ...SEED_USERS.filter((s) => !stored.find((u) => u.email === s.email)),
+      ...stored,
+    ];
+    const found = all.find((u) => u.email === form.email && u.password === form.password);
     if (!found) return setError("Invalid email or password.");
     const estate = ESTATES.find((e) => e.id === found.estateId);
     onLogin({ ...found, estateName: estate ? estate.name : "Estate" });
@@ -172,20 +176,29 @@ function AuthScreen({ onLogin }) {
 
   const handleSignup = async () => {
     setError(""); setSuccess("");
+    const requiresAdminCode = role === "security";
     if (!form.name || !form.email || !form.password || !form.estateId || !form.estateCode)
       return setError("All fields are required.");
+    if (requiresAdminCode && !form.adminCode)
+      return setError("Admin code is required to register as Security.");
     if (form.password !== form.confirm) return setError("Passwords do not match.");
+    if (form.password.length < 6) return setError("Password must be at least 6 characters.");
     const estate = ESTATES.find((e) => e.id === form.estateId);
     if (!estate) return setError("Please select a valid estate.");
-    if (form.estateCode !== estate.code) return setError("Invalid access code for " + estate.name + ".");
+    if (form.estateCode !== estate.code) return setError("Invalid estate code for " + estate.name + ".");
+    if (requiresAdminCode && form.adminCode !== "1234")
+      return setError("Invalid admin code. Contact your estate administrator.");
     const stored = await storageGet(USERS_KEY) || [];
-    const all    = [...SEED_USERS, ...stored];
-    if (all.find((u) => u.email === form.email)) return setError("Email already registered.");
+    const allEmails = [
+      ...SEED_USERS.map((u) => u.email),
+      ...stored.map((u) => u.email),
+    ];
+    if (allEmails.includes(form.email)) return setError("Email already registered.");
     const newUser = { email:form.email, password:form.password, name:form.name, estateId:form.estateId, role };
     await storageSet(USERS_KEY, [...stored, newUser]);
     setSuccess("Account created! Registered to " + estate.name + " as " + (role === "security" ? "Security" : "Resident") + ".");
     setMode("login");
-    setForm({ name:"", email:form.email, password:"", confirm:"", estateId:"", estateCode:"" });
+    setForm({ name:"", email:form.email, password:"", confirm:"", estateId:"", estateCode:"", adminCode:"" });
   };
 
   return (
@@ -231,6 +244,14 @@ function AuthScreen({ onLogin }) {
             </select>
             <label style={c.label}>Estate Access Code</label>
             <input style={c.input} type="text" placeholder="Code from your estate admin" value={form.estateCode} onChange={set("estateCode")} maxLength={10} />
+            {role === "security" && (
+              <div>
+                <div style={c.divider} />
+                <label style={c.label}>Security Admin Code</label>
+                <input style={c.input} type="password" placeholder="Admin-only code" value={form.adminCode} onChange={set("adminCode")} maxLength={20} />
+                <div style={c.hint}>Security accounts require an admin code. Contact your estate administrator to obtain it.</div>
+              </div>
+            )}
             <div style={c.hint}>Your estate and role are permanent once registered.</div>
           </div>
         )}
@@ -671,20 +692,18 @@ function ProfileView({ user, onUserUpdate, onLogout }) {
     if (pwForm.current !== user.password)
       return setPwErr("Current password is incorrect.");
 
-    // Update in seed? Seeds are immutable, so update in persistent store
+    // stored users override seeds
     const stored = await storageGet(USERS_KEY) || [];
     const seedMatch = SEED_USERS.find((u) => u.email === user.email);
+    const existingIdx = stored.findIndex((u) => u.email === user.email);
 
-    if (seedMatch) {
-      // Add an override record for seed users
-      const existing = stored.findIndex((u) => u.email === user.email);
-      const updated  = existing >= 0
-        ? stored.map((u) => u.email === user.email ? { ...u, password: pwForm.newPw } : u)
-        : [...stored, { ...seedMatch, password: pwForm.newPw }];
-      await storageSet(USERS_KEY, updated);
-    } else {
+    if (existingIdx >= 0) {
+      // Already in stored — just update
       const updated = stored.map((u) => u.email === user.email ? { ...u, password: pwForm.newPw } : u);
       await storageSet(USERS_KEY, updated);
+    } else if (seedMatch) {
+      // Seed user — add override record to stored
+      await storageSet(USERS_KEY, [...stored, { ...seedMatch, password: pwForm.newPw }]);
     }
 
     onUserUpdate({ ...user, password: pwForm.newPw });
