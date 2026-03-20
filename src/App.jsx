@@ -9,12 +9,9 @@ const ESTATES = [
   { id: "banana_island", name: "Banana Island", code: "5678" },
 ];
 
-const SEED_USERS = [
-  { email: "adeola@cove.ng",   password: "password123", name: "Adeola",       estateId: "cove_towers",   role: "resident" },
-  { email: "chukwu@banana.ng", password: "password123", name: "Chukwuemeka",  estateId: "banana_island", role: "resident" },
-  { email: "gate@cove.ng",     password: "gate1234",    name: "Gate Officer", estateId: "cove_towers",   role: "security" },
-  { email: "gate@banana.ng",   password: "gate5678",    name: "Gate Officer", estateId: "banana_island", role: "security" },
-];
+// Seed users live in the Supabase database now (inserted via supabase_schema.sql)
+// Kept here only for reference — not used in logic anymore.
+// const SEED_USERS = [...];
 
 const RESIDENTS = [
   { id: 1, name: "Adeola Martins",  unit: "Block A, No. 12" },
@@ -69,45 +66,113 @@ function isInviteValid(invite) {
   return now >= start && now <= end;
 }
 
-// ─── Storage helpers ──────────────────────────────────────────────────────────
+// ─── Supabase client ──────────────────────────────────────────────────────────
+// Install: npm install @supabase/supabase-js
+// Add to your .env:  VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY
 
-const INVITES_KEY       = "upsidian_invites";
-const USERS_KEY         = "upsidian_users";
-const LOG_KEY           = "upsidian_log";
-const RESET_TOKENS_KEY  = "upsidian_reset_tokens";
+import { createClient } from "@supabase/supabase-js";
 
-// Shared storage — window.storage is the single source of truth for all
-// cross-device data (users, invites, logs). localStorage is ONLY used for
-// per-device UI preferences (hidden IDs) and never for shared data.
+const supabase = createClient(
+  import.meta.env.VITE_SUPABASE_URL,
+  import.meta.env.VITE_SUPABASE_ANON_KEY
+);
 
-async function storageGet(key) {
-  try {
-    const res = await window.storage.get(key, true);
-    if (res && res.value) {
-      return JSON.parse(res.value);
-    }
-    return null;
-  } catch(e) {
-    console.warn("storageGet failed for key:", key, e);
-    return null;
-  }
+// ─── DB helpers ───────────────────────────────────────────────────────────────
+
+// USERS
+async function dbGetAllUsers() {
+  const { data, error } = await supabase.from("users").select("*");
+  if (error) { console.error("dbGetAllUsers:", error); return []; }
+  return (data || []).map(u => ({
+    email: u.email, password: u.password, name: u.name,
+    estateId: u.estate_id, role: u.role,
+    createdAt: u.created_at ? new Date(u.created_at).toLocaleDateString("en-NG", { day:"numeric", month:"short", year:"numeric" }) : null,
+  }));
+}
+async function dbCreateUser(user) {
+  const { error } = await supabase.from("users").insert({
+    email: user.email, password: user.password, name: user.name,
+    estate_id: user.estateId, role: user.role,
+  });
+  if (error) { console.error("dbCreateUser:", error); return false; }
+  return true;
+}
+async function dbUpdatePassword(email, newPassword) {
+  const { error } = await supabase.from("users").update({ password: newPassword }).eq("email", email);
+  if (error) { console.error("dbUpdatePassword:", error); return false; }
+  return true;
 }
 
-async function storageSet(key, value) {
-  const serialized = JSON.stringify(value);
-  // Retry up to 3 times in case of transient failure
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    try {
-      const result = await window.storage.set(key, serialized, true);
-      if (result) return; // success
-      console.warn("storageSet attempt", attempt, "returned null for key:", key);
-    } catch(e) {
-      console.error("storageSet attempt", attempt, "failed for key:", key, e);
-    }
-    if (attempt < 3) await new Promise(r => setTimeout(r, 200 * attempt));
-  }
-  console.error("storageSet permanently failed for key:", key);
+// INVITES
+async function dbGetInvites(estateId) {
+  const { data, error } = await supabase.from("invites").select("*").eq("estate_id", estateId).order("id", { ascending: false });
+  if (error) { console.error("dbGetInvites:", error); return []; }
+  return (data || []).map(i => ({
+    id: i.id, guestName: i.guest_name, purpose: i.purpose,
+    date: i.date, timeFrom: i.time_from, timeTo: i.time_to,
+    residentId: i.resident_id, residentName: i.resident_name, residentUnit: i.resident_unit,
+    createdBy: i.created_by, estateId: i.estate_id, code: i.code, status: i.status,
+    createdAt: i.created_at,
+  }));
 }
+async function dbCreateInvite(invite) {
+  const { error } = await supabase.from("invites").insert({
+    id: invite.id, guest_name: invite.guestName, purpose: invite.purpose,
+    date: invite.date, time_from: invite.timeFrom, time_to: invite.timeTo,
+    resident_id: invite.residentId, resident_name: invite.residentName, resident_unit: invite.residentUnit,
+    created_by: invite.createdBy, estate_id: invite.estateId, code: invite.code, status: invite.status,
+  });
+  if (error) { console.error("dbCreateInvite:", error); return false; }
+  return true;
+}
+async function dbMarkInviteUsed(inviteId) {
+  const { error } = await supabase.from("invites").update({ status: "used" }).eq("id", inviteId);
+  if (error) { console.error("dbMarkInviteUsed:", error); return false; }
+  return true;
+}
+async function dbDeleteInvite(inviteId) {
+  const { error } = await supabase.from("invites").delete().eq("id", inviteId);
+  if (error) { console.error("dbDeleteInvite:", error); return false; }
+  return true;
+}
+
+// ACCESS LOG
+async function dbGetLog(estateId) {
+  const { data, error } = await supabase.from("access_log").select("*").eq("estate_id", estateId).order("id", { ascending: false });
+  if (error) { console.error("dbGetLog:", error); return []; }
+  return (data || []).map(l => ({
+    id: l.id, guest: l.guest, resident: l.resident, unit: l.unit,
+    code: l.code, estateId: l.estate_id, time: l.time_str, action: "Checked In",
+  }));
+}
+async function dbAddLogEntry(entry) {
+  const { error } = await supabase.from("access_log").insert({
+    id: entry.id, guest: entry.guest, resident: entry.resident, unit: entry.unit,
+    code: entry.code, estate_id: entry.estateId, time_str: entry.time,
+  });
+  if (error) { console.error("dbAddLogEntry:", error); return false; }
+  return true;
+}
+
+// RESET TOKENS
+async function dbGetResetToken(token) {
+  const { data, error } = await supabase.from("reset_tokens").select("*").eq("token", token).single();
+  if (error || !data) return null;
+  if (new Date(data.expires_at) < new Date()) return null;
+  return { token: data.token, email: data.email, expires: new Date(data.expires_at).getTime() };
+}
+async function dbSaveResetToken(token, email, expiresMs) {
+  await supabase.from("reset_tokens").delete().eq("email", email);
+  const { error } = await supabase.from("reset_tokens").insert({
+    token, email, expires_at: new Date(expiresMs).toISOString(),
+  });
+  if (error) { console.error("dbSaveResetToken:", error); return false; }
+  return true;
+}
+async function dbDeleteResetToken(token) {
+  await supabase.from("reset_tokens").delete().eq("token", token);
+}
+
 
 // ─── Shared styles ────────────────────────────────────────────────────────────
 
@@ -190,12 +255,8 @@ function ForgotPasswordScreen({ onBack }) {
     setLoading(true);
 
     // Check the user exists
-    const stored = await storageGet(USERS_KEY) || [];
-    const all    = [
-      ...SEED_USERS.filter((s) => !stored.find((u) => u.email === s.email)),
-      ...stored,
-    ];
-    const found = all.find((u) => u.email === email.trim().toLowerCase());
+    const allUsers = await dbGetAllUsers();
+    const found = allUsers.find((u) => u.email === email.trim().toLowerCase());
 
     if (!found) {
       // Don't reveal whether the email exists — just show success either way
@@ -208,10 +269,7 @@ function ForgotPasswordScreen({ onBack }) {
     const token   = Math.random().toString(36).substring(2, 10).toUpperCase() +
                     Math.random().toString(36).substring(2, 10).toUpperCase();
     const expires = Date.now() + 60 * 60 * 1000; // 1 hour
-    const tokens  = await storageGet(RESET_TOKENS_KEY) || [];
-    // Remove any existing tokens for this email
-    const cleaned = tokens.filter((t) => t.email !== email.trim().toLowerCase());
-    await storageSet(RESET_TOKENS_KEY, [...cleaned, { token, email: email.trim().toLowerCase(), expires }]);
+    await dbSaveResetToken(token, email.trim().toLowerCase(), expires);
 
     // In a real app this token would be emailed. Here we display it directly
     // so the user can copy the reset link and use it.
@@ -293,9 +351,8 @@ function ResetPasswordScreen({ token, onDone }) {
 
   useEffect(() => {
     (async () => {
-      const tokens = await storageGet(RESET_TOKENS_KEY) || [];
-      const found  = tokens.find((t) => t.token === token);
-      if (!found || Date.now() > found.expires) {
+      const found = await dbGetResetToken(token);
+      if (!found) {
         setTokenValid(false);
       } else {
         setTokenValid(true);
@@ -311,24 +368,9 @@ function ResetPasswordScreen({ token, onDone }) {
     if (form.newPw !== form.confirm) return setError("Passwords do not match.");
     setLoading(true);
 
-    const stored   = await storageGet(USERS_KEY) || [];
-    const seedMatch = SEED_USERS.find((u) => u.email === tokenEmail);
-    const existingIdx = stored.findIndex((u) => u.email === tokenEmail);
-
-    let updated;
-    if (existingIdx >= 0) {
-      updated = stored.map((u) => u.email === tokenEmail ? { ...u, password: form.newPw } : u);
-    } else if (seedMatch) {
-      updated = [...stored, { ...seedMatch, password: form.newPw }];
-    } else {
-      setLoading(false);
-      return setError("Account not found.");
-    }
-    await storageSet(USERS_KEY, updated);
-
-    // Invalidate the token
-    const tokens  = await storageGet(RESET_TOKENS_KEY) || [];
-    await storageSet(RESET_TOKENS_KEY, tokens.filter((t) => t.token !== token));
+    const ok = await dbUpdatePassword(tokenEmail, form.newPw);
+    if (!ok) { setLoading(false); return setError("Failed to update password. Please try again."); }
+    await dbDeleteResetToken(token);
 
     setLoading(false);
     setOk(true);
@@ -436,13 +478,8 @@ function AuthScreen({ onLogin }) {
 
   const handleLogin = async () => {
     setError("");
-    const stored = await storageGet(USERS_KEY) || [];
-    // stored users take priority over seeds (handles password updates + new signups)
-    const all = [
-      ...SEED_USERS.filter((s) => !stored.find((u) => u.email === s.email)),
-      ...stored,
-    ];
-    const found = all.find((u) => u.email === form.email && u.password === form.password);
+    const users = await dbGetAllUsers();
+    const found = users.find((u) => u.email === form.email && u.password === form.password);
     if (!found) return setError("Invalid email or password.");
     const estate = ESTATES.find((e) => e.id === found.estateId);
     onLogin({ ...found, estateName: estate ? estate.name : "Estate" });
@@ -462,18 +499,10 @@ function AuthScreen({ onLogin }) {
     if (form.estateCode !== estate.code) return setError("Invalid estate code for " + estate.name + ".");
     if (requiresAdminCode && form.adminCode !== "1234")
       return setError("Invalid admin code. Contact your estate administrator.");
-    const stored = await storageGet(USERS_KEY) || [];
-    const allEmails = [
-      ...SEED_USERS.map((u) => u.email),
-      ...stored.map((u) => u.email),
-    ];
-    if (allEmails.includes(form.email)) return setError("Email already registered.");
-    const newUser = { email:form.email, password:form.password, name:form.name, estateId:form.estateId, role, createdAt: new Date().toLocaleDateString("en-NG", { timeZone:"Africa/Lagos", day:"numeric", month:"short", year:"numeric" }) };
-    const updatedUsers = [...stored, newUser];
-    await storageSet(USERS_KEY, updatedUsers);
-    // Verify the write stuck before telling the user it worked
-    const verify = await storageGet(USERS_KEY);
-    const saved = verify && verify.find((u) => u.email === form.email);
+    const existingUsers = await dbGetAllUsers();
+    if (existingUsers.find((u) => u.email === form.email)) return setError("Email already registered.");
+    const newUser = { email:form.email, password:form.password, name:form.name, estateId:form.estateId, role };
+    const saved = await dbCreateUser(newUser);
     if (!saved) return setError("Sign-up failed — could not save your account. Please try again.");
     setSuccess("Account created! Registered to " + estate.name + " as " + (role === "security" ? "Security" : "Resident") + ".");
     setMode("login");
@@ -574,7 +603,7 @@ function SecurityApp({ user, onLogout }) {
 
   useEffect(() => {
     (async () => {
-      const log = await storageGet(LOG_KEY + "_" + user.estateId) || [];
+      const log = await dbGetLog(user.estateId);
       setAccessLog(log);
     })();
   }, [user.estateId]);
@@ -584,7 +613,7 @@ function SecurityApp({ user, onLogout }) {
     setLoading(true);
     setGateResult(null);
     const code       = gateCode.toUpperCase().trim();
-    const allInvites = await storageGet(INVITES_KEY + "_" + user.estateId) || [];
+    const allInvites = await dbGetInvites(user.estateId);
     const found      = allInvites.find((i) => i.code === code);
 
     if (!found) {
@@ -592,21 +621,18 @@ function SecurityApp({ user, onLogout }) {
     } else if (found.status === "used") {
       setGateResult({ type: "used" });
     } else if (!isInviteValid(found)) {
-      // Outside allowed time window
       setGateResult({ type: "expired", invite: found });
     } else {
-      // Valid — mark used
-      const updated = allInvites.map((i) => i.id === found.id ? { ...i, status:"used" } : i);
-      await storageSet(INVITES_KEY + "_" + user.estateId, updated);
+      await dbMarkInviteUsed(found.id);
       const entry = {
         id: Date.now(), guest: found.guestName, resident: found.residentName,
-        unit: found.residentUnit, code: found.code,
+        unit: found.residentUnit, code: found.code, estateId: user.estateId,
         time: new Date().toLocaleTimeString("en-NG", { timeZone:"Africa/Lagos" }),
         action: "Checked In",
       };
+      await dbAddLogEntry(entry);
       const newLog = [entry, ...accessLog];
       setAccessLog(newLog);
-      await storageSet(LOG_KEY + "_" + user.estateId, newLog);
       setGateResult({ type: "granted", invite: found });
     }
     setGateCode("");
@@ -733,8 +759,8 @@ function ResidentApp({ user, onLogout, onUserUpdate }) {
   const [codeModal, setCodeModal] = useState(null); // popup for newly created invite
 
   const loadInvites = useCallback(async () => {
-    const stored = await storageGet(INVITES_KEY + "_" + user.estateId) || [];
-    setInvites(stored);
+    const data = await dbGetInvites(user.estateId);
+    setInvites(data);
     setLoadingInvites(false);
   }, [user.estateId]);
 
@@ -778,9 +804,8 @@ function ResidentApp({ user, onLogout, onUserUpdate }) {
       status:       "pending",
       createdAt:    new Date().toLocaleString("en-NG", { timeZone:"Africa/Lagos" }),
     };
-    const stored  = await storageGet(INVITES_KEY + "_" + user.estateId) || [];
-    const updated = [newInvite, ...stored];
-    await storageSet(INVITES_KEY + "_" + user.estateId, updated);
+    await dbCreateInvite(newInvite);
+    const updated = await dbGetInvites(user.estateId);
     setInvites(updated);
     setCodeModal(newInvite);
     setInviteForm({ guestName:"", purpose:"", day:"", month:"", year:"", fromHour:"", fromMin:"", toHour:"", toMin:"", residentId:1 });
@@ -805,10 +830,8 @@ function ResidentApp({ user, onLogout, onUserUpdate }) {
 
   // Delete invite (removes from shared store entirely)
   const deleteInvite = async (id) => {
-    const stored  = await storageGet(INVITES_KEY + "_" + user.estateId) || [];
-    const updated = stored.filter((i) => i.id !== id);
-    await storageSet(INVITES_KEY + "_" + user.estateId, updated);
-    setInvites(updated);
+    await dbDeleteInvite(id);
+    setInvites(prev => prev.filter((i) => i.id !== id));
   };
 
   // Badge colour based on invite state
@@ -1318,19 +1341,7 @@ function ProfileView({ user, onUserUpdate, onLogout }) {
     if (pwForm.current !== user.password)
       return setPwErr("Current password is incorrect.");
 
-    // stored users override seeds
-    const stored = await storageGet(USERS_KEY) || [];
-    const seedMatch = SEED_USERS.find((u) => u.email === user.email);
-    const existingIdx = stored.findIndex((u) => u.email === user.email);
-
-    if (existingIdx >= 0) {
-      // Already in stored — just update
-      const updated = stored.map((u) => u.email === user.email ? { ...u, password: pwForm.newPw } : u);
-      await storageSet(USERS_KEY, updated);
-    } else if (seedMatch) {
-      // Seed user — add override record to stored
-      await storageSet(USERS_KEY, [...stored, { ...seedMatch, password: pwForm.newPw }]);
-    }
+    await dbUpdatePassword(user.email, pwForm.newPw);
 
     onUserUpdate({ ...user, password: pwForm.newPw });
     setPwOk("Password updated successfully.");
@@ -1433,7 +1444,7 @@ function SecurityAppWithProfile({ user, onLogout, onUserUpdate }) {
   };
 
   const loadLog = async () => {
-    const log = await storageGet(LOG_KEY + "_" + user.estateId) || [];
+    const log = await dbGetLog(user.estateId);
     setAccessLog(log);
   };
 
@@ -1456,7 +1467,7 @@ function SecurityAppWithProfile({ user, onLogout, onUserUpdate }) {
     setLoading(true);
     setGateResult(null);
     const code       = gateCode.toUpperCase().trim();
-    const allInvites = await storageGet(INVITES_KEY + "_" + user.estateId) || [];
+    const allInvites = await dbGetInvites(user.estateId);
     const found      = allInvites.find((i) => i.code === code);
 
     if (!found) {
@@ -1466,17 +1477,16 @@ function SecurityAppWithProfile({ user, onLogout, onUserUpdate }) {
     } else if (!isInviteValid(found)) {
       setGateResult({ type:"expired", invite:found });
     } else {
-      const updated = allInvites.map((i) => i.id === found.id ? { ...i, status:"used" } : i);
-      await storageSet(INVITES_KEY + "_" + user.estateId, updated);
+      await dbMarkInviteUsed(found.id);
       const entry = {
         id: Date.now(), guest: found.guestName, resident: found.residentName,
-        unit: found.residentUnit, code: found.code,
+        unit: found.residentUnit, code: found.code, estateId: user.estateId,
         time: new Date().toLocaleTimeString("en-NG", { timeZone:"Africa/Lagos" }),
         action: "Checked In",
       };
+      await dbAddLogEntry(entry);
       const newLog = [entry, ...accessLog];
       setAccessLog(newLog);
-      await storageSet(LOG_KEY + "_" + user.estateId, newLog);
       setGateResult({ type:"granted", invite:found });
     }
     setGateCode("");
