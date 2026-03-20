@@ -21,10 +21,7 @@ const RESIDENTS = [
   { id: 2, name: "Chukwuemeka Obi", unit: "Block B, No. 5"  },
 ];
 
-const ALERTS = [
-  { id: 1, type: "info",    message: "Water supply will be interrupted Friday 8am to 12pm.", time: "2h ago" },
-  { id: 2, type: "warning", message: "Suspicious vehicle spotted near Gate 2. Please be alert.", time: "5h ago" },
-];
+
 
 // ─── Nigeria time helpers (WAT = UTC+1) ──────────────────────────────────────
 
@@ -56,6 +53,14 @@ function fmtNigeriaTime(dateStr, timeStr) {
   });
 }
 
+// Format "YYYY-MM-DD" as "20 Mar 2026"
+function fmtDate(dateStr) {
+  if (!dateStr) return "";
+  const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const [y, m, d] = dateStr.split("-").map(Number);
+  return d + " " + months[m - 1] + " " + y;
+}
+
 // Check if an invite is currently valid in Nigeria time
 function isInviteValid(invite) {
   const now     = nowNigeria();
@@ -66,29 +71,42 @@ function isInviteValid(invite) {
 
 // ─── Storage helpers ──────────────────────────────────────────────────────────
 
-const INVITES_KEY = "upsidian_invites";
-const USERS_KEY   = "upsidian_users";
-const LOG_KEY     = "upsidian_log";
+const INVITES_KEY       = "upsidian_invites";
+const USERS_KEY         = "upsidian_users";
+const LOG_KEY           = "upsidian_log";
+const RESET_TOKENS_KEY  = "upsidian_reset_tokens";
+
+// Shared storage — window.storage is the single source of truth for all
+// cross-device data (users, invites, logs). localStorage is ONLY used for
+// per-device UI preferences (hidden IDs) and never for shared data.
 
 async function storageGet(key) {
-  // Try window.storage (cross-device), fall back to localStorage (same-device)
   try {
     const res = await window.storage.get(key, true);
-    if (res && res.value) return JSON.parse(res.value);
-  } catch {}
-  try {
-    const raw = localStorage.getItem(key);
-    if (raw) return JSON.parse(raw);
-  } catch {}
-  return null;
+    if (res && res.value) {
+      return JSON.parse(res.value);
+    }
+    return null;
+  } catch(e) {
+    console.warn("storageGet failed for key:", key, e);
+    return null;
+  }
 }
 
 async function storageSet(key, value) {
   const serialized = JSON.stringify(value);
-  // localStorage first — synchronous and reliable, never silently fails
-  try { localStorage.setItem(key, serialized); } catch(e) { console.error('localStorage write failed', e); }
-  // Also write to window.storage for cross-device sync
-  try { await window.storage.set(key, serialized, true); } catch {}
+  // Retry up to 3 times in case of transient failure
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const result = await window.storage.set(key, serialized, true);
+      if (result) return; // success
+      console.warn("storageSet attempt", attempt, "returned null for key:", key);
+    } catch(e) {
+      console.error("storageSet attempt", attempt, "failed for key:", key, e);
+    }
+    if (attempt < 3) await new Promise(r => setTimeout(r, 200 * attempt));
+  }
+  console.error("storageSet permanently failed for key:", key);
 }
 
 // ─── Shared styles ────────────────────────────────────────────────────────────
@@ -158,6 +176,250 @@ const c = {
   }),
 };
 
+// ─── Forgot Password Screen ───────────────────────────────────────────────────
+
+function ForgotPasswordScreen({ onBack }) {
+  const [email, setEmail]     = useState("");
+  const [error, setError]     = useState("");
+  const [sent, setSent]       = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  const handleRequest = async () => {
+    setError("");
+    if (!email.trim()) return setError("Please enter your email address.");
+    setLoading(true);
+
+    // Check the user exists
+    const stored = await storageGet(USERS_KEY) || [];
+    const all    = [
+      ...SEED_USERS.filter((s) => !stored.find((u) => u.email === s.email)),
+      ...stored,
+    ];
+    const found = all.find((u) => u.email === email.trim().toLowerCase());
+
+    if (!found) {
+      // Don't reveal whether the email exists — just show success either way
+      setLoading(false);
+      setSent(true);
+      return;
+    }
+
+    // Generate a token and store it with a 1-hour expiry
+    const token   = Math.random().toString(36).substring(2, 10).toUpperCase() +
+                    Math.random().toString(36).substring(2, 10).toUpperCase();
+    const expires = Date.now() + 60 * 60 * 1000; // 1 hour
+    const tokens  = await storageGet(RESET_TOKENS_KEY) || [];
+    // Remove any existing tokens for this email
+    const cleaned = tokens.filter((t) => t.email !== email.trim().toLowerCase());
+    await storageSet(RESET_TOKENS_KEY, [...cleaned, { token, email: email.trim().toLowerCase(), expires }]);
+
+    // In a real app this token would be emailed. Here we display it directly
+    // so the user can copy the reset link and use it.
+    const resetLink = window.location.href.split("?")[0] + "?reset=" + token;
+    setLoading(false);
+    setSent(true);
+    // Store the link in state so we can show it (demo only)
+    setSentLink(resetLink);
+  };
+
+  const [sentLink, setSentLink] = useState("");
+
+  if (sent) {
+    return (
+      <div style={c.page}>
+        <div style={c.authCard}>
+          <div style={c.logo}>UPSIDIAN</div>
+          <div style={c.logoSub}>SMART ESTATE MANAGEMENT</div>
+          <div style={{ width:48, height:48, borderRadius:"50%", background:"#0a1e0a", border:"1px solid #1a3d1a", display:"flex", alignItems:"center", justifyContent:"center", fontSize:22, marginBottom:16 }}>✓</div>
+          <div style={c.title}>Check your email</div>
+          <div style={{ fontSize:13, color:"#555", marginBottom:24, lineHeight:1.7 }}>
+            If <span style={{ color:"#888" }}>{email}</span> is registered, a password reset link has been sent. Check your inbox and spam folder.
+          </div>
+          {sentLink && (
+            <div style={{ background:"#0a0a0a", border:"1px solid #1e1e1e", borderRadius:10, padding:14, marginBottom:20 }}>
+              <div style={{ fontSize:10, color:"#333", letterSpacing:1.5, textTransform:"uppercase", marginBottom:8 }}>Demo — Reset Link</div>
+              <div style={{ fontSize:11, color:"#555", wordBreak:"break-all", lineHeight:1.6 }}>{sentLink}</div>
+              <button
+                onClick={() => { navigator.clipboard && navigator.clipboard.writeText(sentLink); }}
+                style={{ marginTop:10, width:"100%", background:"#1a1a1a", border:"1px solid #2a2a2a", color:"#888", borderRadius:8, padding:"7px 0", fontSize:11, cursor:"pointer" }}
+              >
+                Copy Link
+              </button>
+            </div>
+          )}
+          <button style={c.btnWhite} onClick={onBack}>Back to Sign In &rarr;</button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={c.page}>
+      <div style={c.authCard}>
+        <button style={c.btnBack} onClick={onBack}>&larr; Back to Sign In</button>
+        <div style={c.logo}>UPSIDIAN</div>
+        <div style={c.logoSub}>SMART ESTATE MANAGEMENT</div>
+        <div style={c.title}>Reset password</div>
+        <div style={c.desc}>Enter your registered email and we will send you a reset link.</div>
+
+        {error && <div style={c.err}>{error}</div>}
+
+        <label style={c.label}>Email Address</label>
+        <input
+          style={c.input}
+          type="email"
+          placeholder="you@estate.ng"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && handleRequest()}
+        />
+        <button style={c.btnWhite} onClick={handleRequest} disabled={loading}>
+          {loading ? "Sending..." : "Send Reset Link"} {!loading && "→"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Reset Password Screen ─────────────────────────────────────────────────────
+
+function ResetPasswordScreen({ token, onDone }) {
+  const [form, setForm]   = useState({ newPw:"", confirm:"" });
+  const [error, setError] = useState("");
+  const [ok, setOk]       = useState(false);
+  const [loading, setLoading]   = useState(false);
+  const [tokenValid, setTokenValid] = useState(null); // null=checking, true, false
+  const [tokenEmail, setTokenEmail] = useState("");
+
+  useEffect(() => {
+    (async () => {
+      const tokens = await storageGet(RESET_TOKENS_KEY) || [];
+      const found  = tokens.find((t) => t.token === token);
+      if (!found || Date.now() > found.expires) {
+        setTokenValid(false);
+      } else {
+        setTokenValid(true);
+        setTokenEmail(found.email);
+      }
+    })();
+  }, [token]);
+
+  const handleReset = async () => {
+    setError("");
+    if (!form.newPw || !form.confirm) return setError("Both fields are required.");
+    if (form.newPw.length < 6) return setError("Password must be at least 6 characters.");
+    if (form.newPw !== form.confirm) return setError("Passwords do not match.");
+    setLoading(true);
+
+    const stored   = await storageGet(USERS_KEY) || [];
+    const seedMatch = SEED_USERS.find((u) => u.email === tokenEmail);
+    const existingIdx = stored.findIndex((u) => u.email === tokenEmail);
+
+    let updated;
+    if (existingIdx >= 0) {
+      updated = stored.map((u) => u.email === tokenEmail ? { ...u, password: form.newPw } : u);
+    } else if (seedMatch) {
+      updated = [...stored, { ...seedMatch, password: form.newPw }];
+    } else {
+      setLoading(false);
+      return setError("Account not found.");
+    }
+    await storageSet(USERS_KEY, updated);
+
+    // Invalidate the token
+    const tokens  = await storageGet(RESET_TOKENS_KEY) || [];
+    await storageSet(RESET_TOKENS_KEY, tokens.filter((t) => t.token !== token));
+
+    setLoading(false);
+    setOk(true);
+  };
+
+  if (tokenValid === null) {
+    return (
+      <div style={c.page}>
+        <div style={c.authCard}>
+          <div style={c.logo}>UPSIDIAN</div>
+          <div style={{ color:"#555", fontSize:13, marginTop:16 }}>Verifying reset link...</div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!tokenValid) {
+    return (
+      <div style={c.page}>
+        <div style={c.authCard}>
+          <div style={c.logo}>UPSIDIAN</div>
+          <div style={c.logoSub}>SMART ESTATE MANAGEMENT</div>
+          <div style={{ ...c.err, marginTop:16 }}>This reset link is invalid or has expired. Please request a new one.</div>
+          <button style={{ ...c.btnWhite, marginTop:8 }} onClick={onDone}>Back to Sign In &rarr;</button>
+        </div>
+      </div>
+    );
+  }
+
+  if (ok) {
+    return (
+      <div style={c.page}>
+        <div style={c.authCard}>
+          <div style={c.logo}>UPSIDIAN</div>
+          <div style={c.logoSub}>SMART ESTATE MANAGEMENT</div>
+          <div style={{ width:48, height:48, borderRadius:"50%", background:"#0a1e0a", border:"1px solid #1a3d1a", display:"flex", alignItems:"center", justifyContent:"center", fontSize:22, marginBottom:16 }}>✓</div>
+          <div style={c.title}>Password updated</div>
+          <div style={{ fontSize:13, color:"#555", marginBottom:24 }}>Your password has been changed successfully. You can now sign in.</div>
+          <button style={c.btnWhite} onClick={onDone}>Sign In &rarr;</button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={c.page}>
+      <div style={c.authCard}>
+        <div style={c.logo}>UPSIDIAN</div>
+        <div style={c.logoSub}>SMART ESTATE MANAGEMENT</div>
+        <div style={c.title}>Choose new password</div>
+        <div style={c.desc}>Setting a new password for <span style={{ color:"#888" }}>{tokenEmail}</span>.</div>
+
+        {error && <div style={c.err}>{error}</div>}
+
+        <label style={c.label}>New Password</label>
+        <PwInput placeholder="At least 6 characters" value={form.newPw} onChange={(e) => setForm(p => ({ ...p, newPw: e.target.value }))} style={c.input} />
+        <label style={c.label}>Confirm New Password</label>
+        <PwInput placeholder="Repeat new password" value={form.confirm} onChange={(e) => setForm(p => ({ ...p, confirm: e.target.value }))} style={c.input} />
+        <button style={c.btnWhite} onClick={handleReset} disabled={loading}>
+          {loading ? "Saving..." : "Update Password →"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Shared PwInput component (show/hide toggle) ─────────────────────────────
+
+function PwInput({ placeholder, value, onChange, onKeyDown, style }) {
+  const [show, setShow] = useState(false);
+  return (
+    <div style={{ position:"relative", marginBottom: style?.marginBottom ?? 16 }}>
+      <input
+        type={show ? "text" : "password"}
+        placeholder={placeholder}
+        value={value}
+        onChange={onChange}
+        onKeyDown={onKeyDown}
+        style={{ ...style, marginBottom:0, paddingRight:44 }}
+      />
+      <button
+        type="button"
+        onClick={() => setShow(s => !s)}
+        style={{ position:"absolute", right:12, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", color:"#444", cursor:"pointer", fontSize:12, letterSpacing:0.3, padding:0 }}
+      >
+        {show ? "Hide" : "Show"}
+      </button>
+    </div>
+  );
+}
+
 // ─── Auth Screen ──────────────────────────────────────────────────────────────
 
 function AuthScreen({ onLogin }) {
@@ -170,6 +432,7 @@ function AuthScreen({ onLogin }) {
   const set      = (k) => (e) => setForm((p) => ({ ...p, [k]: e.target.value }));
   const goLogin  = () => { setMode("login");  setError(""); setSuccess(""); };
   const goSignup = () => { setMode("signup"); setError(""); setSuccess(""); };
+  const goForgot = () => { setMode("forgot"); setError(""); setSuccess(""); };
 
   const handleLogin = async () => {
     setError("");
@@ -205,7 +468,7 @@ function AuthScreen({ onLogin }) {
       ...stored.map((u) => u.email),
     ];
     if (allEmails.includes(form.email)) return setError("Email already registered.");
-    const newUser = { email:form.email, password:form.password, name:form.name, estateId:form.estateId, role };
+    const newUser = { email:form.email, password:form.password, name:form.name, estateId:form.estateId, role, createdAt: new Date().toLocaleDateString("en-NG", { timeZone:"Africa/Lagos", day:"numeric", month:"short", year:"numeric" }) };
     const updatedUsers = [...stored, newUser];
     await storageSet(USERS_KEY, updatedUsers);
     // Verify the write stuck before telling the user it worked
@@ -216,6 +479,8 @@ function AuthScreen({ onLogin }) {
     setMode("login");
     setForm({ name:"", email:form.email, password:"", confirm:"", estateId:"", estateCode:"", adminCode:"" });
   };
+
+  if (mode === "forgot") return <ForgotPasswordScreen onBack={goLogin} />;
 
   return (
     <div style={c.page}>
@@ -244,14 +509,16 @@ function AuthScreen({ onLogin }) {
         )}
 
         <label style={c.label}>Email Address</label>
-        <input style={c.input} type="email" placeholder="you@estate.ng" value={form.email} onChange={set("email")} />
+        <input style={c.input} type="email" placeholder="you@estate.ng" value={form.email} onChange={set("email")}
+          onKeyDown={(e) => e.key === "Enter" && mode === "login" && handleLogin()} />
         <label style={c.label}>Password</label>
-        <input style={c.input} type="password" placeholder="Enter password" value={form.password} onChange={set("password")} />
+        <PwInput placeholder="Enter password" value={form.password} onChange={set("password")} style={c.input}
+          onKeyDown={(e) => e.key === "Enter" && (mode === "login" ? handleLogin() : handleSignup())} />
 
         {mode === "signup" && (
           <div>
             <label style={c.label}>Confirm Password</label>
-            <input style={c.input} type="password" placeholder="Confirm password" value={form.confirm} onChange={set("confirm")} />
+            <PwInput placeholder="Confirm password" value={form.confirm} onChange={set("confirm")} style={c.input} />
             <div style={c.divider} />
             <label style={c.label}>Select Your Estate</label>
             <select value={form.estateId} onChange={set("estateId")} style={{ ...c.input, color: form.estateId ? "#fff" : "#555" }}>
@@ -276,7 +543,18 @@ function AuthScreen({ onLogin }) {
           {mode === "login" ? "Sign In" : "Create Account"} &rarr;
         </button>
 
-        <div style={{ marginTop:22, textAlign:"center", fontSize:13, color:"#555" }}>
+        {mode === "login" && (
+          <div style={{ marginTop:14, textAlign:"center" }}>
+            <button
+              style={{ background:"none", border:"none", color:"#444", fontSize:12, cursor:"pointer", letterSpacing:0.5 }}
+              onClick={goForgot}
+            >
+              Forgot password?
+            </button>
+          </div>
+        )}
+
+        <div style={{ marginTop:mode === "login" ? 10 : 22, textAlign:"center", fontSize:13, color:"#555" }}>
           {mode === "login"
             ? <span>No account yet? <button style={c.btnGhost} onClick={goSignup}>Sign up</button></span>
             : <span>Already registered? <button style={c.btnGhost} onClick={goLogin}>Sign in</button></span>}
@@ -419,7 +697,7 @@ function SecurityApp({ user, onLogout }) {
         </div>
 
         {/* Access log */}
-        <div style={c.section}>Today's Access Log</div>
+        <div style={c.section}>Access Log</div>
         {accessLog.length === 0 ? (
           <div style={{ color:"#2a2a2a", fontSize:13, padding:"12px 0" }}>No check-ins yet.</div>
         ) : (
@@ -446,12 +724,13 @@ function ResidentApp({ user, onLogout, onUserUpdate }) {
   const [invites, setInvites]   = useState([]);
   const [loadingInvites, setLoadingInvites] = useState(true);
   const [inviteForm, setInviteForm] = useState({
-    guestName:"", guestPhone:"", purpose:"",
+    guestName:"", purpose:"",
     day:"", month:"", year:"",
     fromHour:"", fromMin:"", toHour:"", toMin:"",
     residentId:1,
   });
-  const [inviteErr, setInviteErr] = useState("");
+  const [inviteErr, setInviteErr]       = useState("");
+  const [codeModal, setCodeModal] = useState(null); // popup for newly created invite
 
   const loadInvites = useCallback(async () => {
     const stored = await storageGet(INVITES_KEY + "_" + user.estateId) || [];
@@ -459,7 +738,12 @@ function ResidentApp({ user, onLogout, onUserUpdate }) {
     setLoadingInvites(false);
   }, [user.estateId]);
 
-  useEffect(() => { loadInvites(); }, [loadInvites]);
+  useEffect(() => {
+    loadInvites();
+    // Poll every 30s so invite status updates (e.g. marked used by security) stay fresh
+    const interval = setInterval(loadInvites, 30000);
+    return () => clearInterval(interval);
+  }, [loadInvites]);
 
   const createInvite = async () => {
     setInviteErr("");
@@ -481,7 +765,6 @@ function ResidentApp({ user, onLogout, onUserUpdate }) {
     const newInvite = {
       id: Date.now(),
       guestName:    inviteForm.guestName,
-      guestPhone:   inviteForm.guestPhone,
       purpose:      inviteForm.purpose,
       date,
       timeFrom,
@@ -499,7 +782,8 @@ function ResidentApp({ user, onLogout, onUserUpdate }) {
     const updated = [newInvite, ...stored];
     await storageSet(INVITES_KEY + "_" + user.estateId, updated);
     setInvites(updated);
-    setInviteForm({ guestName:"", guestPhone:"", purpose:"", day:"", month:"", year:"", fromHour:"", fromMin:"", toHour:"", toMin:"", residentId:1 });
+    setCodeModal(newInvite);
+    setInviteForm({ guestName:"", purpose:"", day:"", month:"", year:"", fromHour:"", fromMin:"", toHour:"", toMin:"", residentId:1 });
   };
 
   const myInvites = invites.filter((i) => i.createdBy === user.email);
@@ -538,6 +822,71 @@ function ResidentApp({ user, onLogout, onUserUpdate }) {
     return { style: c.badgeWhite, label: "Active" };
   };
 
+  // Full-size copy box used in the modal popup
+  // Reliable copy helper — navigator.clipboard is blocked in sandboxed iframes
+  const copyToClipboard = (text) => {
+    try {
+      const el = document.createElement("textarea");
+      el.value = text;
+      el.style.cssText = "position:fixed;top:-9999px;left:-9999px;opacity:0";
+      document.body.appendChild(el);
+      el.select();
+      el.setSelectionRange(0, 99999);
+      document.execCommand("copy");
+      document.body.removeChild(el);
+      return true;
+    } catch { return false; }
+  };
+
+  const ModalCopyBox = ({ code }) => {
+    const [copied, setCopied] = useState(false);
+    const handleCopy = () => {
+      const ok = copyToClipboard(code);
+      if (ok) {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2500);
+      }
+    };
+    return (
+      <div style={{ background:"#0a0a0a", border:"1px solid #1e1e1e", borderRadius:14, padding:"18px 16px", textAlign:"center" }}>
+        <div style={{ fontSize:10, color:"#333", letterSpacing:2, textTransform:"uppercase", marginBottom:10 }}>Access Code</div>
+        <div style={{ fontSize:36, fontWeight:800, letterSpacing:8, color:"#fff", marginBottom:16, fontVariantNumeric:"tabular-nums" }}>{code}</div>
+        <button
+          onClick={handleCopy}
+          style={{
+            width:"100%", borderRadius:10, padding:"12px 0", fontSize:14, fontWeight:700,
+            cursor:"pointer", letterSpacing:0.5, transition:"all 0.2s",
+            background: copied ? "#0a1e0a" : "#fff",
+            color: copied ? "#6bff6b" : "#000",
+            border: copied ? "1px solid #1a3d1a" : "none",
+          }}
+        >
+          {copied ? "Copied!" : "Copy Code"}
+        </button>
+      </div>
+    );
+  };
+
+  // Small copy button used inside invite cards
+  const CopyButton = ({ text }) => {
+    const [copied, setCopied] = useState(false);
+    const handleCopy = () => {
+      const ok = copyToClipboard(text);
+      if (ok) {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      }
+    };
+    return (
+      <button
+        onClick={handleCopy}
+        style={{ position:"absolute", top:8, right:8, background: copied ? "#0a1e0a" : "#222", border: copied ? "1px solid #1a3d1a" : "1px solid #2a2a2a", color: copied ? "#6bff6b" : "#555", borderRadius:6, padding:"3px 8px", fontSize:10, cursor:"pointer", letterSpacing:0.5, transition:"all 0.2s" }}
+      >
+        {copied ? "Copied!" : "Copy"}
+      </button>
+    );
+  };
+
   const InviteCard = ({ inv }) => {
     const { style: badgeStyle, label: badgeLabel } = inviteBadge(inv);
     const [confirmDelete, setConfirmDelete] = useState(false);
@@ -548,14 +897,15 @@ function ResidentApp({ user, onLogout, onUserUpdate }) {
           <span style={badgeStyle}>{badgeLabel}</span>
         </div>
         <div style={{ fontSize:12, color:"#555", marginBottom:2 }}>
-          {inv.date}{inv.purpose ? " · " + inv.purpose : ""}
+          {fmtDate(inv.date)}{inv.purpose ? " · " + inv.purpose : ""}
         </div>
         <div style={{ fontSize:11, color:"#444" }}>
-          {inv.timeFrom} – {inv.timeTo} (Nigeria time)
+          {inv.timeFrom} – {inv.timeTo} WAT
         </div>
-        <div style={c.codeBox}>
+        <div style={{ ...c.codeBox, position:"relative" }}>
           <div style={{ fontSize:10, color:"#333", letterSpacing:1.5, textTransform:"uppercase", marginBottom:4 }}>Access Code</div>
           <div style={{ fontSize:24, fontWeight:800, letterSpacing:6, color:"#fff" }}>{inv.code}</div>
+          <CopyButton text={inv.code} />
         </div>
 
         {/* Normal action row */}
@@ -603,7 +953,6 @@ function ResidentApp({ user, onLogout, onUserUpdate }) {
   const navItems = [
     { id:"dashboard", label:"Home",    icon:"⌂" },
     { id:"invite",    label:"Invite",  icon:"✉" },
-    { id:"alerts",    label:"Alerts",  icon:"◎" },
     { id:"profile",   label:"Profile", icon:"◯" },
   ];
 
@@ -630,8 +979,8 @@ function ResidentApp({ user, onLogout, onUserUpdate }) {
               {[
                 { label:"Active Invites",   value: myInvites.filter((i) => i.status === "pending" && isInviteValid(i)).length },
                 { label:"Total Invites",    value: myInvites.length },
-                { label:"Upcoming Invites", value: myInvites.filter((i) => i.status === "pending" && nowNigeria() < parseNigeriaDateTime(i.date, i.timeFrom)).length },
-                { label:"Alerts",           value: ALERTS.length },
+                { label:"Upcoming",         value: myInvites.filter((i) => i.status === "pending" && nowNigeria() < parseNigeriaDateTime(i.date, i.timeFrom)).length },
+                { label:"Used",             value: myInvites.filter((i) => i.status === "used").length },
               ].map((s) => (
                 <div key={s.label} style={c.statCard}>
                   <div style={{ fontSize:28, fontWeight:800, color:"#fff" }}>{s.value}</div>
@@ -640,20 +989,22 @@ function ResidentApp({ user, onLogout, onUserUpdate }) {
               ))}
             </div>
 
-            <div style={c.section}>Recent Alerts</div>
-            {ALERTS.map((a) => (
-              <div key={a.id} style={{ background:"#141414", border:"1px solid #1e1e1e", borderLeft:"3px solid "+(a.type==="warning"?"#888":"#444"), borderRadius:8, padding:"12px 14px", marginBottom:8, fontSize:13, color: a.type==="warning"?"#bbb":"#aaa" }}>
-                {a.message}
-                <div style={{ color:"#333", fontSize:11, marginTop:5 }}>{a.time}</div>
-              </div>
-            ))}
-
             <div style={{ marginTop:20 }}>
               <div style={c.section}>Your Recent Invites</div>
               {loadingInvites ? (
                 <div style={{ color:"#2a2a2a", fontSize:13 }}>Loading...</div>
               ) : myInvites.length === 0 ? (
-                <div style={{ color:"#2a2a2a", fontSize:13, padding:"12px 0" }}>No invites yet. Head to the Invite tab.</div>
+                <div style={{ background:"#141414", border:"1px solid #1e1e1e", borderRadius:14, padding:"20px 16px", textAlign:"center" }}>
+                  <div style={{ fontSize:28, marginBottom:10 }}>&#x2709;</div>
+                  <div style={{ fontWeight:700, color:"#e0e0e0", fontSize:14, marginBottom:6 }}>No invites yet</div>
+                  <div style={{ fontSize:12, color:"#444", marginBottom:16, lineHeight:1.6 }}>Create a guest invite to give your visitor a secure one-time code to enter the estate.</div>
+                  <button
+                    onClick={() => setView("invite")}
+                    style={{ background:"#fff", color:"#000", border:"none", borderRadius:8, padding:"9px 20px", fontSize:12, fontWeight:700, cursor:"pointer", letterSpacing:0.5 }}
+                  >
+                    Create First Invite
+                  </button>
+                </div>
               ) : (
                 myInvites.filter((i) => !hiddenIds.includes(i.id)).slice(0, 3).map((inv) => <InviteCard key={inv.id} inv={inv} />)
               )}
@@ -671,19 +1022,25 @@ function ResidentApp({ user, onLogout, onUserUpdate }) {
 
             {inviteErr && <div style={c.err}>{inviteErr}</div>}
 
-            {/* Basic fields */}
-            {[
-              { label:"Guest Name",       key:"guestName",  type:"text", placeholder:"e.g. John Doe" },
-              { label:"Guest Phone",      key:"guestPhone", type:"tel",  placeholder:"e.g. 08012345678" },
-              { label:"Purpose of Visit", key:"purpose",    type:"text", placeholder:"e.g. Family visit" },
-            ].map((f) => (
-              <div key={f.key}>
-                <label style={c.label}>{f.label}</label>
-                <input type={f.type} placeholder={f.placeholder} value={inviteForm[f.key]}
-                  onChange={(e) => setInviteForm({ ...inviteForm, [f.key]: e.target.value })}
-                  style={c.appInput} />
-              </div>
-            ))}
+            {/* Guest Name */}
+            <label style={c.label}>Guest Name</label>
+            <input type="text" placeholder="e.g. John Doe" value={inviteForm.guestName}
+              onChange={(e) => setInviteForm({ ...inviteForm, guestName: e.target.value })}
+              style={c.appInput} />
+
+            {/* Purpose of Visit — dropdown */}
+            <label style={c.label}>Purpose of Visit</label>
+            <select
+              value={inviteForm.purpose}
+              onChange={(e) => setInviteForm({ ...inviteForm, purpose: e.target.value })}
+              style={{ ...c.select, color: inviteForm.purpose ? "#fff" : "#555" }}
+            >
+              <option value="" disabled>Select purpose...</option>
+              <option value="Delivery">Delivery</option>
+              <option value="Visit">Visit</option>
+              <option value="Staff">Staff</option>
+              <option value="Workman">Workman</option>
+            </select>
 
             {/* Date — three selects, past dates disabled */}
             {(()=>{
@@ -841,20 +1198,6 @@ function ResidentApp({ user, onLogout, onUserUpdate }) {
           </div>
         )}
 
-        {/* ALERTS */}
-        {view === "alerts" && (
-          <div>
-            <div style={{ fontWeight:700, fontSize:17, marginBottom:4 }}>Community Alerts</div>
-            <div style={{ color:"#555", fontSize:13, marginBottom:20 }}>Stay informed about estate updates.</div>
-            {ALERTS.map((a) => (
-              <div key={a.id} style={{ background:"#141414", border:"1px solid #1e1e1e", borderLeft:"3px solid "+(a.type==="warning"?"#888":"#444"), borderRadius:12, padding:16, marginBottom:12 }}>
-                <div style={{ fontSize:14, color:"#bbb" }}>{a.message}</div>
-                <div style={{ color:"#333", fontSize:11, marginTop:6 }}>{a.time}</div>
-              </div>
-            ))}
-          </div>
-        )}
-
         {/* PROFILE */}
         {view === "profile" && (
           <ProfileView user={user} onUserUpdate={onUserUpdate} onLogout={onLogout} />
@@ -862,13 +1205,94 @@ function ResidentApp({ user, onLogout, onUserUpdate }) {
 
       </div>
 
-      <div style={c.bottomNav}>
-        {navItems.map((item) => (
-          <button key={item.id} onClick={() => setView(item.id)} style={c.navBtn(view === item.id)}>
-            <span style={{ fontSize:18 }}>{item.icon}</span>
-            {item.label}
+      {/* Code generated modal */}
+      {codeModal && (
+        <div
+          onClick={() => setCodeModal(null)}
+          style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.75)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:1000, padding:24 }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{ background:"#141414", border:"1px solid #2a2a2a", borderRadius:20, padding:28, width:"100%", maxWidth:340, boxShadow:"0 20px 60px rgba(0,0,0,0.8)" }}
+          >
+            {/* Header */}
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:20 }}>
+              <div>
+                <div style={{ fontWeight:800, fontSize:17, color:"#fff", marginBottom:3 }}>Invite Created!</div>
+                <div style={{ fontSize:12, color:"#555" }}>Share this code with your guest</div>
+              </div>
+              <button
+                onClick={() => setCodeModal(null)}
+                style={{ background:"#222", border:"1px solid #2a2a2a", color:"#666", borderRadius:"50%", width:28, height:28, cursor:"pointer", fontSize:14, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}
+              >
+                &#x2715;
+              </button>
+            </div>
+
+            {/* Guest info */}
+            <div style={{ background:"#0a0a0a", border:"1px solid #1e1e1e", borderRadius:12, padding:"12px 14px", marginBottom:16 }}>
+              {[
+                ["Guest",   codeModal.guestName],
+                ["Date",    fmtDate(codeModal.date)],
+                ["Window",  codeModal.timeFrom + " – " + codeModal.timeTo + " WAT"],
+                ...(codeModal.purpose ? [["Purpose", codeModal.purpose]] : []),
+              ].map(([k, v]) => (
+                <div key={k} style={{ display:"flex", justifyContent:"space-between", padding:"5px 0", borderBottom:"1px solid #1a1a1a" }}>
+                  <span style={{ fontSize:11, color:"#444", letterSpacing:0.5 }}>{k}</span>
+                  <span style={{ fontSize:12, color:"#888" }}>{v}</span>
+                </div>
+              ))}
+            </div>
+
+            {/* Big code + copy */}
+            <ModalCopyBox code={codeModal.code} />
+
+            <button
+              onClick={() => setCodeModal(null)}
+              style={{ width:"100%", background:"#1a1a1a", border:"1px solid #2a2a2a", color:"#666", borderRadius:10, padding:"11px 0", fontSize:13, cursor:"pointer", marginTop:12 }}
+            >
+              Done
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Bottom nav — Invite is the prominent centre button */}
+      <div style={{ display:"flex", background:"#141414", borderTop:"1px solid #1e1e1e", padding:"6px 0", alignItems:"flex-end", position:"relative" }}>
+        {/* Home */}
+        <button onClick={() => setView("dashboard")} style={c.navBtn(view === "dashboard")} >
+          <span style={{ fontSize:18 }}>⌂</span>
+          Home
+        </button>
+
+        {/* Invite — raised centre FAB-style */}
+        <div style={{ flex:1, display:"flex", justifyContent:"center", alignItems:"center", position:"relative" }}>
+          <button
+            onClick={() => setView("invite")}
+            style={{
+              position:"relative",
+              bottom:18,
+              width:58, height:58,
+              borderRadius:"50%",
+              background: view === "invite" ? "#fff" : "#e8e8e8",
+              border: view === "invite" ? "3px solid #fff" : "3px solid #2a2a2a",
+              boxShadow: "0 4px 20px rgba(0,0,0,0.6)",
+              cursor:"pointer",
+              display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center",
+              gap:1,
+              transition:"all 0.15s",
+            }}
+          >
+            <span style={{ fontSize:22, color: view === "invite" ? "#000" : "#333" }}>✉</span>
+            <span style={{ fontSize:9, fontWeight:700, letterSpacing:0.5, color: view === "invite" ? "#000" : "#555" }}>INVITE</span>
           </button>
-        ))}
+        </div>
+
+        {/* Profile */}
+        <button onClick={() => setView("profile")} style={c.navBtn(view === "profile")}>
+          <span style={{ fontSize:18 }}>◯</span>
+          Profile
+        </button>
       </div>
     </div>
   );
@@ -936,8 +1360,9 @@ function ProfileView({ user, onUserUpdate, onLogout }) {
         </div>
 
         {[
-          ["Estate",  estate ? estate.name : user.estateId],
-          ["Role",    user.role === "security" ? "Security Officer" : "Resident"],
+          ["Estate",    estate ? estate.name : user.estateId],
+          ["Role",      user.role === "security" ? "Security Officer" : "Resident"],
+          ["Member since", user.createdAt || "—"],
         ].map(([k, v]) => (
           <div key={k} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"10px 0", borderTop:"1px solid #1a1a1a" }}>
             <span style={{ fontSize:12, color:"#555", letterSpacing:0.5 }}>{k}</span>
@@ -954,11 +1379,11 @@ function ProfileView({ user, onUserUpdate, onLogout }) {
         {pwOk  && <div style={c.ok}>{pwOk}</div>}
 
         <label style={c.label}>Current Password</label>
-        <input style={c.appInput} type="password" placeholder="Your current password" value={pwForm.current} onChange={setPw("current")} />
+        <PwInput placeholder="Your current password" value={pwForm.current} onChange={setPw("current")} style={c.appInput} />
         <label style={c.label}>New Password</label>
-        <input style={c.appInput} type="password" placeholder="At least 6 characters" value={pwForm.newPw} onChange={setPw("newPw")} />
+        <PwInput placeholder="At least 6 characters" value={pwForm.newPw} onChange={setPw("newPw")} style={c.appInput} />
         <label style={c.label}>Confirm New Password</label>
-        <input style={{ ...c.appInput, marginBottom:0 }} type="password" placeholder="Repeat new password" value={pwForm.confirm} onChange={setPw("confirm")} />
+        <PwInput placeholder="Repeat new password" value={pwForm.confirm} onChange={setPw("confirm")} style={{ ...c.appInput, marginBottom:0 }} />
         <div style={{ marginTop:14 }}>
           <button style={c.btnApp} onClick={handleChangePassword}>Update Password</button>
         </div>
@@ -979,6 +1404,18 @@ function SecurityAppWithProfile({ user, onLogout, onUserUpdate }) {
   const [accessLog, setAccessLog]   = useState([]);
   const [loading, setLoading]       = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [nigeriaTime, setNigeriaTime] = useState("");
+
+  useEffect(() => {
+    const tick = () => {
+      const t = new Date().toLocaleTimeString("en-NG", { timeZone:"Africa/Lagos", hour:"2-digit", minute:"2-digit", second:"2-digit", hour12:false });
+      const d = new Date().toLocaleDateString("en-NG", { timeZone:"Africa/Lagos", weekday:"short", day:"numeric", month:"short" });
+      setNigeriaTime(d + " · " + t + " WAT");
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, []);
 
   // Hidden log entry ids for security — persisted per user
   const secHiddenKey = "upsidian_sec_hidden_" + user.email;
@@ -1000,7 +1437,12 @@ function SecurityAppWithProfile({ user, onLogout, onUserUpdate }) {
     setAccessLog(log);
   };
 
-  useEffect(() => { loadLog(); }, [user.estateId]);
+  useEffect(() => {
+    loadLog();
+    // Auto-refresh log every 30s so new check-ins from other terminals appear
+    const interval = setInterval(loadLog, 30000);
+    return () => clearInterval(interval);
+  }, [user.estateId]);
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -1063,9 +1505,15 @@ function SecurityAppWithProfile({ user, onLogout, onUserUpdate }) {
 
         {view === "gate" && (
           <div>
-            <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:20 }}>
-              <div style={{ ...c.badge, fontSize:11 }}>Security Officer</div>
-              <div style={{ color:"#333", fontSize:11 }}>{user.name}</div>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:20 }}>
+              <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                <div style={{ ...c.badge, fontSize:11 }}>Security Officer</div>
+                <div style={{ color:"#333", fontSize:11 }}>{user.name}</div>
+              </div>
+              <div style={{ background:"#141414", border:"1px solid #1e1e1e", borderRadius:8, padding:"5px 10px", textAlign:"right" }}>
+                <div style={{ fontSize:10, color:"#333", letterSpacing:1, textTransform:"uppercase", marginBottom:2 }}>Nigeria Time</div>
+                <div style={{ fontSize:11, color:"#888", fontVariantNumeric:"tabular-nums" }}>{nigeriaTime}</div>
+              </div>
             </div>
 
             <div style={{ background:"#141414", border:"1px solid #1e1e1e", borderRadius:16, padding:20, marginBottom:20 }}>
@@ -1124,7 +1572,7 @@ function SecurityAppWithProfile({ user, onLogout, onUserUpdate }) {
             </div>
 
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
-              <div style={c.section}>Today's Access Log</div>
+              <div style={c.section}>Access Log</div>
               <div style={{ display:"flex", alignItems:"center", gap:10 }}>
                 {hiddenLogIds.length > 0 && (
                   <button onClick={unhideAllLogs} style={{ background:"none", border:"none", color:"#555", fontSize:11, cursor:"pointer", textDecoration:"underline", letterSpacing:0.5 }}>
@@ -1193,6 +1641,21 @@ export default function UpsidianApp() {
   const [user, setUser] = useState(null);
   const logout          = () => setUser(null);
   const updateUser      = (updated) => setUser(updated);
+
+  // Check if we landed on a password reset link (?reset=TOKEN)
+  const resetToken = new URLSearchParams(window.location.search).get("reset");
+  if (resetToken) {
+    return (
+      <ResetPasswordScreen
+        token={resetToken}
+        onDone={() => {
+          // Strip the query param and go to login
+          window.history.replaceState({}, "", window.location.pathname);
+          setUser(null);
+        }}
+      />
+    );
+  }
 
   if (!user) return <AuthScreen onLogin={setUser} />;
   if (user.role === "security")
