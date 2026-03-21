@@ -113,9 +113,10 @@ async function dbGetApprovedResidents(estateId) {
   if (error) { console.error("dbGetApprovedResidents:", error); return []; }
   return data || [];
 }
-async function dbAddApprovedResident(email, estateId, unitName) {
+async function dbAddApprovedResident(email, estateId, unitName, role="resident") {
   const { error } = await supabase.from("approved_residents").upsert({
-    email: email.trim().toLowerCase(), estate_id: estateId, unit_name: unitName, used: false,
+    email: email.trim().toLowerCase(), estate_id: estateId, unit_name: unitName,
+    used: false, role: role,
   }, { onConflict: "email,estate_id" });
   if (error) { console.error("dbAddApprovedResident:", error); return false; }
   return true;
@@ -549,11 +550,19 @@ function AuthScreen({ onLogin, onLogoTap = () => {} }) {
     if (form.password !== form.confirm) return setError("Passwords do not match.");
     if (form.password.length < 6) return setError("Password must be at least 6 characters.");
 
-    // Security officers still need estate + admin code
+    // Security officers need estate + admin code + must be on the approved list
     if (role === "security") {
       if (!form.estateId) return setError("Please select your estate.");
       if (!form.adminCode) return setError("Admin code is required to register as Security.");
-      if (form.adminCode !== "1234") return setError("Invalid admin code. Contact your estate administrator.");
+      // Verify admin code matches the estate's security_code in DB
+      const estateRec = ESTATES.find(e => e.id === form.estateId);
+      if (!estateRec || form.adminCode !== estateRec.code)
+        return setError("Invalid admin code. Contact your estate administrator.");
+      // Also check that this email is on the approved security list
+      const approvedSec = await dbCheckApprovedResident(form.email, form.estateId);
+      if (!approvedSec || approvedSec.unitName !== "__security__") {
+        return setError("Your email is not approved as a security officer for this estate. Contact your estate administrator.");
+      }
     }
 
     let resolvedEstateId = form.estateId;
@@ -604,9 +613,7 @@ function AuthScreen({ onLogin, onLogoTap = () => {} }) {
     }
 
     // Mark the approved_residents row as used so it can't be reused
-    if (role === "resident") {
-      await dbMarkResidentUsed(form.email, resolvedEstateId);
-    }
+    await dbMarkResidentUsed(form.email, resolvedEstateId);
 
     await supabase.auth.signOut();
     setSuccess(
@@ -1792,6 +1799,9 @@ function AdminPanel({ onExit }) {
   const [newEstate, setNewEstate] = useState({ id:"", name:"", code:"" });
   // New resident form
   const [newRes, setNewRes]       = useState({ email:"", unit:"" });
+  // New security form
+  const [newSec, setNewSec]       = useState({ email:"" });
+  const [accessSubTab, setAccessSubTab] = useState("residents"); // residents | security
   // Bulk paste
   const [bulkText, setBulkText]   = useState("");
   const [bulkMsg, setBulkMsg]     = useState("");
@@ -1877,8 +1887,16 @@ function AdminPanel({ onExit }) {
   const addResident = async () => {
     if (!selEstate || !newRes.email || !newRes.unit)
       return setMsg("Select estate, enter email and unit.");
-    const ok = await dbAddApprovedResident(newRes.email, selEstate, newRes.unit);
+    const ok = await dbAddApprovedResident(newRes.email, selEstate, newRes.unit, "resident");
     if (ok) { setMsg("Resident added!"); setNewRes({ email:"", unit:"" }); loadResidents(selEstate); }
+    else setMsg("Failed. Email may already exist for this estate.");
+  };
+
+  const addSecurity = async () => {
+    if (!selEstate || !newSec.email)
+      return setMsg("Select estate and enter email.");
+    const ok = await dbAddApprovedResident(newSec.email, selEstate, "__security__", "security");
+    if (ok) { setMsg("Security officer approved!"); setNewSec({ email:"" }); loadResidents(selEstate); }
     else setMsg("Failed. Email may already exist for this estate.");
   };
 
@@ -1973,9 +1991,13 @@ function AdminPanel({ onExit }) {
 
       {/* Tabs */}
       <div style={{ display:"flex", gap:8, marginBottom:20 }}>
-        {["estates","residents","users"].map(t => (
-          <button key={t} style={a.tab(view === t)} onClick={() => setView(t)}>
-            {t.charAt(0).toUpperCase() + t.slice(1)}
+        {[
+          { id:"estates",   label:"Estates" },
+          { id:"residents", label:"Access" },
+          { id:"users",     label:"Users" },
+        ].map(t => (
+          <button key={t.id} style={a.tab(view === t.id)} onClick={() => setView(t.id)}>
+            {t.label}
           </button>
         ))}
       </div>
@@ -2009,9 +2031,10 @@ function AdminPanel({ onExit }) {
         </div>
       )}
 
-      {/* ── RESIDENTS TAB ── */}
+      {/* ── ACCESS TAB (Residents + Security) ── */}
       {view === "residents" && (
         <div>
+          {/* Estate selector */}
           <div style={a.card}>
             <div style={a.section}>Select Estate</div>
             <select value={selEstate} onChange={e => setSelEstate(e.target.value)}
@@ -2023,65 +2046,127 @@ function AdminPanel({ onExit }) {
 
           {selEstate && (
             <>
-              {/* Add single resident */}
-              <div style={a.card}>
-                <div style={a.section}>Add Single Resident</div>
-                <label style={a.label}>Email Address</label>
-                <input style={a.input} type="email" placeholder="resident@email.com"
-                  value={newRes.email} onChange={e => setNewRes(p => ({ ...p, email: e.target.value }))} />
-                <label style={a.label}>Unit Name</label>
-                <input style={a.input} placeholder="Block A, Flat 3"
-                  value={newRes.unit} onChange={e => setNewRes(p => ({ ...p, unit: e.target.value }))} />
-                <button style={a.btn} onClick={addResident}>Add Resident</button>
+              {/* Sub-tab toggle: Residents | Security */}
+              <div style={{ display:"flex", gap:8, marginBottom:16 }}>
+                <button style={a.tab(accessSubTab === "residents")} onClick={() => setAccessSubTab("residents")}>
+                  Residents ({residents.filter(r => r.unit_name !== "__security__").length})
+                </button>
+                <button style={a.tab(accessSubTab === "security")} onClick={() => setAccessSubTab("security")}>
+                  Security Officers ({residents.filter(r => r.unit_name === "__security__").length})
+                </button>
               </div>
 
-              {/* Bulk add */}
-              <div style={a.card}>
-                <div style={a.section}>Bulk Add Residents</div>
-                <div style={{ fontSize:11, color:"#444", marginBottom:8 }}>
-                  Paste one resident per line: <span style={{ color:"#666" }}>email, unit name</span><br/>
-                  Example: john@gmail.com, Block A Flat 1
-                </div>
-                <textarea
-                  value={bulkText}
-                  onChange={e => setBulkText(e.target.value)}
-                  placeholder={"john@gmail.com, Block A Flat 1\njane@gmail.com, Block B Flat 3"}
-                  style={{ ...a.input, height:120, resize:"vertical", fontFamily:"monospace", fontSize:12 }}
-                />
-                {bulkMsg && <div style={{ ...a.msg, marginBottom:8 }}>{bulkMsg}</div>}
-                <button style={a.btn} onClick={handleBulkAdd}>Bulk Add</button>
-              </div>
+              {/* ── RESIDENTS SUB-TAB ── */}
+              {accessSubTab === "residents" && (
+                <>
+                  <div style={a.card}>
+                    <div style={a.section}>Add Single Resident</div>
+                    <label style={a.label}>Email Address</label>
+                    <input style={a.input} type="email" placeholder="resident@email.com"
+                      value={newRes.email} onChange={e => setNewRes(p => ({ ...p, email: e.target.value }))} />
+                    <label style={a.label}>Unit Name</label>
+                    <input style={a.input} placeholder="Block A, Flat 3"
+                      value={newRes.unit} onChange={e => setNewRes(p => ({ ...p, unit: e.target.value }))} />
+                    <button style={a.btn} onClick={addResident}>Add Resident</button>
+                  </div>
 
-              {/* Resident list */}
-              <div style={a.card}>
-                <div style={a.section}>
-                  Approved Residents — {estates.find(e => e.id === selEstate)?.name} ({residents.length})
-                </div>
-                {residents.length === 0 ? <div style={{ color:"#333", fontSize:13 }}>No residents added yet.</div> :
-                  residents.map(r => (
-                    <div key={r.id} style={a.row}>
-                      <div>
-                        <div style={{ fontSize:13, color: r.used ? "#555" : "#e0e0e0" }}>{r.email}</div>
-                        <div style={{ fontSize:11, color:"#444" }}>{r.unit_name} &nbsp;&middot;&nbsp;
-                          <span style={{ color: r.used ? "#6bff6b" : "#888" }}>{r.used ? "Signed up" : "Pending"}</span>
-                        </div>
-                      </div>
-                      <div style={{ display:"flex", gap:6 }}>
-                        {r.used && (
-                          <button style={a.btnSm} onClick={async () => {
-                            await dbResetApprovedResident(r.email, selEstate);
-                            loadResidents(selEstate);
-                          }}>Reset</button>
-                        )}
-                        <button style={a.btnRed} onClick={async () => {
-                          await dbDeleteApprovedResident(r.id);
-                          loadResidents(selEstate);
-                        }}>Remove</button>
-                      </div>
+                  <div style={a.card}>
+                    <div style={a.section}>Bulk Add Residents</div>
+                    <div style={{ fontSize:11, color:"#444", marginBottom:8 }}>
+                      One per line: <span style={{ color:"#666" }}>email, unit name</span>
                     </div>
-                  ))
-                }
-              </div>
+                    <textarea
+                      value={bulkText}
+                      onChange={e => setBulkText(e.target.value)}
+                      placeholder={"john@gmail.com, Block A Flat 1\njane@gmail.com, Block B Flat 3"}
+                      style={{ ...a.input, height:100, resize:"vertical", fontFamily:"monospace", fontSize:12 }}
+                    />
+                    {bulkMsg && <div style={{ ...a.msg, marginBottom:8 }}>{bulkMsg}</div>}
+                    <button style={a.btn} onClick={handleBulkAdd}>Bulk Add</button>
+                  </div>
+
+                  <div style={a.card}>
+                    <div style={a.section}>
+                      Approved Residents — {estates.find(e => e.id === selEstate)?.name}
+                    </div>
+                    {residents.filter(r => r.unit_name !== "__security__").length === 0
+                      ? <div style={{ color:"#333", fontSize:13 }}>No residents added yet.</div>
+                      : residents.filter(r => r.unit_name !== "__security__").map(r => (
+                          <div key={r.id} style={a.row}>
+                            <div>
+                              <div style={{ fontSize:13, color: r.used ? "#555" : "#e0e0e0" }}>{r.email}</div>
+                              <div style={{ fontSize:11, color:"#444" }}>
+                                {r.unit_name} &nbsp;&middot;&nbsp;
+                                <span style={{ color: r.used ? "#6bff6b" : "#888" }}>{r.used ? "Signed up" : "Pending"}</span>
+                              </div>
+                            </div>
+                            <div style={{ display:"flex", gap:6 }}>
+                              {r.used && (
+                                <button style={a.btnSm} onClick={async () => {
+                                  await dbResetApprovedResident(r.email, selEstate);
+                                  loadResidents(selEstate);
+                                }}>Reset</button>
+                              )}
+                              <button style={a.btnRed} onClick={async () => {
+                                await dbDeleteApprovedResident(r.id);
+                                loadResidents(selEstate);
+                              }}>Remove</button>
+                            </div>
+                          </div>
+                        ))
+                    }
+                  </div>
+                </>
+              )}
+
+              {/* ── SECURITY SUB-TAB ── */}
+              {accessSubTab === "security" && (
+                <>
+                  <div style={a.card}>
+                    <div style={a.section}>Add Security Officer</div>
+                    <div style={{ fontSize:11, color:"#444", marginBottom:10, lineHeight:1.6 }}>
+                      Add the email address of a gate security officer. They will be able to sign up using this email and the security admin code for this estate.
+                    </div>
+                    <label style={a.label}>Email Address</label>
+                    <input style={a.input} type="email" placeholder="security@email.com"
+                      value={newSec.email} onChange={e => setNewSec(p => ({ ...p, email: e.target.value }))} />
+                    <button style={a.btn} onClick={addSecurity}>Approve Security Officer</button>
+                  </div>
+
+                  <div style={a.card}>
+                    <div style={a.section}>
+                      Approved Security Officers — {estates.find(e => e.id === selEstate)?.name}
+                    </div>
+                    {residents.filter(r => r.unit_name === "__security__").length === 0
+                      ? <div style={{ color:"#333", fontSize:13 }}>No security officers added yet.</div>
+                      : residents.filter(r => r.unit_name === "__security__").map(r => (
+                          <div key={r.id} style={a.row}>
+                            <div>
+                              <div style={{ fontSize:13, color: r.used ? "#555" : "#e0e0e0" }}>{r.email}</div>
+                              <div style={{ fontSize:11 }}>
+                                <span style={{ color: r.used ? "#6bff6b" : "#c8860a" }}>
+                                  {r.used ? "Signed up" : "Pending — awaiting registration"}
+                                </span>
+                              </div>
+                            </div>
+                            <div style={{ display:"flex", gap:6 }}>
+                              {r.used && (
+                                <button style={a.btnSm} onClick={async () => {
+                                  await dbResetApprovedResident(r.email, selEstate);
+                                  loadResidents(selEstate);
+                                }}>Reset</button>
+                              )}
+                              <button style={a.btnRed} onClick={async () => {
+                                await dbDeleteApprovedResident(r.id);
+                                loadResidents(selEstate);
+                              }}>Remove</button>
+                            </div>
+                          </div>
+                        ))
+                    }
+                  </div>
+                </>
+              )}
             </>
           )}
         </div>
