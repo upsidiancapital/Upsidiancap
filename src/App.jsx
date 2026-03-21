@@ -138,11 +138,20 @@ async function dbGetAllUsersAdmin() {
   return data || [];
 }
 async function dbDeleteUser(email) {
-  // Delete from our users table — Supabase Auth account stays (can be cleaned manually)
+  // 1. Delete all profiles for this email from our users table
   const { error } = await supabase.from("users").delete().eq("email", email);
   if (error) { console.error("dbDeleteUser:", error); return false; }
-  // Also reset their approved_residents entry so they can re-register if needed
+
+  // 2. Reset their approved_residents entries so they can re-register
   await supabase.from("approved_residents").update({ used: false }).eq("email", email);
+
+  // 3. Delete from Supabase Auth via Edge Function (requires service role)
+  try {
+    await supabase.functions.invoke("delete-user", { body: { email } });
+  } catch (err) {
+    console.warn("Could not delete from Supabase Auth:", err);
+    // Still return true — table deletion succeeded, Auth cleanup may need manual attention
+  }
   return true;
 }
 
@@ -948,10 +957,27 @@ function ResidentApp({ user, onLogout, onUserUpdate }) {
   const [view, setView]         = useState("dashboard");
   const [invites, setInvites]   = useState([]);
   const [loadingInvites, setLoadingInvites] = useState(true);
-  const [inviteForm, setInviteForm] = useState({
-    guestName:"", purpose:"",
-    day:"", month:"", year:"",
-    fromHour:"", fromMin:"", toHour:"", toMin:"",
+  const [inviteForm, setInviteForm] = useState(() => {
+    const now    = nowNigeria();
+    const y      = String(now.getFullYear());
+    const mo     = String(now.getMonth() + 1).padStart(2, "0");
+    const d      = String(now.getDate()).padStart(2, "0");
+    // Round current minute up to nearest 15
+    const rawMin = now.getMinutes();
+    const rMin   = Math.ceil(rawMin / 15) * 15;
+    const fromH  = rMin === 60
+      ? String((now.getHours() + 1) % 24).padStart(2, "0")
+      : String(now.getHours()).padStart(2, "0");
+    const fromM  = rMin === 60 ? "00" : String(rMin).padStart(2, "0");
+    // End time = start + 1hr
+    const toH    = String((Number(fromH) + 1) % 24).padStart(2, "0");
+    const toM    = fromM;
+    return {
+      guestName:"", purpose:"",
+      day: d, month: mo, year: y,
+      fromHour: fromH, fromMin: fromM,
+      toHour: toH, toMin: toM,
+    };
   });
   const [inviteErr, setInviteErr]       = useState("");
   const [codeModal, setCodeModal] = useState(null); // popup for newly created invite
@@ -1005,7 +1031,19 @@ function ResidentApp({ user, onLogout, onUserUpdate }) {
     const updated = await dbGetInvites(user.estateId);
     setInvites(updated);
     setCodeModal(newInvite);
-    setInviteForm({ guestName:"", purpose:"", day:"", month:"", year:"", fromHour:"", fromMin:"", toHour:"", toMin:"" });
+    // Reset form but keep today's defaults
+    const now2   = nowNigeria();
+    const rMin2  = Math.ceil(now2.getMinutes() / 15) * 15;
+    const fromH2 = rMin2 === 60 ? String((now2.getHours()+1)%24).padStart(2,"0") : String(now2.getHours()).padStart(2,"0");
+    const fromM2 = rMin2 === 60 ? "00" : String(rMin2).padStart(2,"0");
+    setInviteForm({
+      guestName:"", purpose:"",
+      day: String(now2.getDate()).padStart(2,"0"),
+      month: String(now2.getMonth()+1).padStart(2,"0"),
+      year: String(now2.getFullYear()),
+      fromHour: fromH2, fromMin: fromM2,
+      toHour: String((Number(fromH2)+1)%24).padStart(2,"0"), toMin: fromM2,
+    });
   };
 
   const myInvites = invites.filter((i) => i.createdBy === user.email);
@@ -1264,55 +1302,40 @@ function ResidentApp({ user, onLogout, onUserUpdate }) {
 
             {/* Date — three selects, past dates disabled */}
             {(()=>{
-              const today    = nowNigeria();
-              const todayY   = today.getFullYear();
-              const todayM   = today.getMonth() + 1; // 1-indexed
-              const todayD   = today.getDate();
-              const selY     = Number(inviteForm.year)  || 0;
-              const selM     = Number(inviteForm.month) || 0;
-              // How many days in the selected month/year
-              const daysInMonth = selY && selM ? new Date(selY, selM, 0).getDate() : 31;
-              // Years: current year up to 2 years ahead
-              const years = Array.from({length:3},(_,i)=> todayY + i);
+              const today       = nowNigeria();
+              const todayY      = today.getFullYear();
+              const todayM      = today.getMonth() + 1;
+              const todayD      = today.getDate();
+              // Year is always current year — no dropdown needed
+              const fixedYear   = todayY;
+              const selM        = Number(inviteForm.month) || 0;
+              const daysInMonth = selM ? new Date(fixedYear, selM, 0).getDate() : 31;
               return (
                 <div>
-                  <label style={c.label}>Visit Date</label>
+                  <label style={c.label}>Visit Date — {fixedYear}</label>
                   <div style={{ display:"flex", gap:8, marginBottom:14 }}>
-                    {/* Year */}
-                    <select
-                      value={inviteForm.year}
-                      onChange={(e) => setInviteForm({ ...inviteForm, year: e.target.value, month:"", day:"" })}
-                      style={{ flex:1, padding:"12px 8px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontSize:14, color: inviteForm.year ? "#fff" : "#555" }}
-                    >
-                      <option value="">Year</option>
-                      {years.map(y=>(
-                        <option key={y} value={String(y)}>{y}</option>
-                      ))}
-                    </select>
-                    {/* Month — disable months before today if same year */}
+                    {/* Month */}
                     <select
                       value={inviteForm.month}
-                      onChange={(e) => setInviteForm({ ...inviteForm, month: e.target.value, day:"" })}
-                      style={{ flex:2, padding:"12px 8px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontSize:14, color: inviteForm.month ? "#fff" : "#555" }}
+                      onChange={(e) => setInviteForm({ ...inviteForm, month: e.target.value, day:"", year: String(fixedYear) })}
+                      style={{ flex:2, padding:"12px 8px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontSize:14, color:"#fff" }}
                     >
-                      <option value="">Month</option>
                       {["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"].map((m,i)=>{
-                        const mNum = i + 1;
-                        const isPast = selY === todayY && mNum < todayM;
+                        const mNum  = i + 1;
+                        const isPast = mNum < todayM;
                         const val   = String(mNum).padStart(2,"0");
                         return <option key={val} value={val} disabled={isPast}>{m}</option>;
                       })}
                     </select>
-                    {/* Day — disable days before today if same year+month */}
+                    {/* Day */}
                     <select
                       value={inviteForm.day}
                       onChange={(e) => setInviteForm({ ...inviteForm, day: e.target.value })}
-                      style={{ flex:1, padding:"12px 8px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontSize:14, color: inviteForm.day ? "#fff" : "#555" }}
+                      style={{ flex:1, padding:"12px 8px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontSize:14, color:"#fff" }}
                     >
-                      <option value="">Day</option>
                       {Array.from({length: daysInMonth},(_,i)=>{
                         const dNum  = i + 1;
-                        const isPast = selY === todayY && selM === todayM && dNum < todayD;
+                        const isPast = selM === todayM && dNum < todayD;
                         const val   = String(dNum).padStart(2,"0");
                         return <option key={val} value={val} disabled={isPast}>{dNum}</option>;
                       })}
