@@ -260,6 +260,32 @@ async function dbDeleteInvite(inviteId) {
   return true;
 }
 
+// MESSAGES
+async function dbSendMessage(userEmail, userName, estateId, message) {
+  const { error } = await supabase.from("messages").insert({
+    user_email: userEmail, user_name: userName,
+    estate_id: estateId, message: message.trim(),
+    status: "open",
+  });
+  if (error) { console.error("dbSendMessage:", error); return false; }
+  return true;
+}
+async function dbGetMessages() {
+  const { data, error } = await supabase.from("messages").select("*").order("created_at", { ascending: false });
+  if (error) { console.error("dbGetMessages:", error); return []; }
+  return data || [];
+}
+async function dbResolveMessage(id) {
+  const { error } = await supabase.from("messages").update({ status: "resolved" }).eq("id", id);
+  if (error) { console.error("dbResolveMessage:", error); return false; }
+  return true;
+}
+async function dbDeleteMessage(id) {
+  const { error } = await supabase.from("messages").delete().eq("id", id);
+  if (error) { console.error("dbDeleteMessage:", error); return false; }
+  return true;
+}
+
 // ACCESS LOG
 async function dbGetLog(estateId) {
   const { data, error } = await supabase.from("access_log").select("*").eq("estate_id", estateId).order("id", { ascending: false });
@@ -310,11 +336,11 @@ const c = {
   logo:    { fontSize:24, fontWeight:800, color:"#fff", letterSpacing:4, marginBottom:4 },
   logoSub: { fontSize:10, color:"#888", letterSpacing:1.5, marginBottom:30 },
   title:   { fontSize:20, fontWeight:700, color:"#fff", marginBottom:5 },
-  desc:    { fontSize:13, color:"#555", marginBottom:24 },
-  label:   { fontSize:10, fontWeight:600, color:"#666", letterSpacing:1.5, display:"block", marginBottom:7, textTransform:"uppercase" },
-  hint:    { fontSize:11, color:"#333", marginTop:-10, marginBottom:16, lineHeight:1.6 },
-  section: { fontWeight:700, fontSize:11, color:"#555", letterSpacing:2, textTransform:"uppercase", marginBottom:10, marginTop:4 },
-  greet:   { color:"#555", marginBottom:16, fontSize:14 },
+  desc:    { fontSize:13, color:"#888", marginBottom:24 },
+  label:   { fontSize:10, fontWeight:600, color:"#999", letterSpacing:1.5, display:"block", marginBottom:7, textTransform:"uppercase" },
+  hint:    { fontSize:11, color:"#666", marginTop:-10, marginBottom:16, lineHeight:1.6 },
+  section: { fontWeight:700, fontSize:11, color:"#888", letterSpacing:2, textTransform:"uppercase", marginBottom:10, marginTop:4 },
+  greet:   { color:"#888", marginBottom:16, fontSize:14 },
 
   input:     { width:"100%", padding:"12px 14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontSize:14, color:"#fff", boxSizing:"border-box", outline:"none", marginBottom:16 },
   appInput:  { width:"100%", padding:"12px 14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontSize:14, color:"#fff", boxSizing:"border-box", outline:"none", marginBottom:14 },
@@ -1634,6 +1660,10 @@ function ProfileView({ user, onUserUpdate, onLogout }) {
   const [pwErr, setPwErr]   = useState("");
   const [pwOk,  setPwOk]    = useState("");
   const [pwOpen, setPwOpen] = useState(false);
+  const [msgOpen, setMsgOpen] = useState(false);
+  const [msgText, setMsgText] = useState("");
+  const [msgSent, setMsgSent] = useState(false);
+  const [msgErr,  setMsgErr]  = useState("");
 
   const setPw = (k) => (e) => setPwForm((p) => ({ ...p, [k]: e.target.value }));
 
@@ -1725,6 +1755,51 @@ function ProfileView({ user, onUserUpdate, onLogout }) {
             <div style={{ marginTop:14 }}>
               <button style={c.btnApp} onClick={handleChangePassword}>Update Password</button>
             </div>
+          </div>
+        )}
+      </div>
+
+      {/* Contact Admin */}
+      <div style={{ background:"#141414", border:"1px solid #1e1e1e", borderRadius:14, padding:20, marginBottom:16 }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+          <div style={c.section}>Contact Admin</div>
+          <button
+            onClick={() => { setMsgOpen(v => !v); setMsgText(""); setMsgSent(false); setMsgErr(""); }}
+            style={{ background:"none", border:"1px solid #2a2a2a", color:"#555", borderRadius:6, padding:"4px 10px", fontSize:11, cursor:"pointer" }}
+          >
+            {msgOpen ? "Cancel" : "Send Message"}
+          </button>
+        </div>
+        {!msgOpen && (
+          <div style={{ fontSize:12, color:"#555", marginTop:6 }}>
+            Have an issue or question? Send a message to the admin team.
+          </div>
+        )}
+        {msgOpen && !msgSent && (
+          <div style={{ marginTop:14 }}>
+            {msgErr && <div style={c.err}>{msgErr}</div>}
+            <label style={c.label}>Your Message</label>
+            <textarea
+              value={msgText}
+              onChange={e => setMsgText(e.target.value)}
+              placeholder="Describe your issue or question..."
+              maxLength={500}
+              style={{ width:"100%", padding:"12px 14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontSize:14, color:"#fff", boxSizing:"border-box", outline:"none", resize:"none", height:100, fontFamily:"inherit" }}
+            />
+            <div style={{ fontSize:11, color:"#555", marginBottom:12, textAlign:"right" }}>{msgText.length}/500</div>
+            <button style={c.btnApp} onClick={async () => {
+              if (!msgText.trim()) return setMsgErr("Please enter a message.");
+              const ok = await dbSendMessage(user.email, user.name, user.estateId, msgText);
+              if (ok) { setMsgSent(true); setMsgErr(""); }
+              else setMsgErr("Failed to send. Please try again.");
+            }}>
+              Send Message
+            </button>
+          </div>
+        )}
+        {msgOpen && msgSent && (
+          <div style={{ ...c.ok, marginTop:14 }}>
+            Message sent! The admin team will get back to you.
           </div>
         )}
       </div>
@@ -2007,6 +2082,7 @@ function AdminPanel({ onExit }) {
   const [selEstate, setSelEstate]       = useState("");
   const [userEstateFilter, setUserEstateFilter] = useState(""); // filter users by estate
   const [confirmDeleteUser, setConfirmDeleteUser] = useState(null); // email of user pending delete
+  const [messages, setMessages]         = useState([]);
   const [loading, setLoading]     = useState(false);
   const [msg, setMsg]             = useState("");
 
@@ -2071,8 +2147,8 @@ function AdminPanel({ onExit }) {
 
   const load = async () => {
     setLoading(true);
-    const [e, u] = await Promise.all([dbGetEstates(), dbGetAllUsersAdmin()]);
-    setEstates(e); setUsers(u);
+    const [e, u, m] = await Promise.all([dbGetEstates(), dbGetAllUsersAdmin(), dbGetMessages()]);
+    setEstates(e); setUsers(u); setMessages(m);
     ESTATES.length = 0; ESTATES.push(...e);
     setLoading(false);
   };
@@ -2134,17 +2210,17 @@ function AdminPanel({ onExit }) {
   };
 
   const a = {
-    wrap:    { fontFamily:"'DM Sans','Helvetica Neue',sans-serif", minHeight:"100vh", background:"#0a0a0a", color:"#fff", padding:24 },
+    wrap:    { fontFamily:"'DM Sans','Helvetica Neue',sans-serif", minHeight:"100vh", background:"#0a0a0a", color:"#fff", padding:24, paddingTop:"calc(24px + env(safe-area-inset-top))" },
     header:  { display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:28, paddingBottom:16, borderBottom:"1px solid #1e1e1e" },
     logo:    { fontSize:20, fontWeight:800, letterSpacing:4, color:"#fff" },
-    tab:     (active) => ({ background: active ? "#fff" : "#1a1a1a", color: active ? "#000" : "#555", border: active ? "none" : "1px solid #2a2a2a", borderRadius:8, padding:"8px 16px", fontSize:12, fontWeight:700, cursor:"pointer", letterSpacing:0.5 }),
+    tab:     (active) => ({ background: active ? "#fff" : "#1a1a1a", color: active ? "#000" : "#777", border: active ? "none" : "1px solid #2a2a2a", borderRadius:8, padding:"8px 16px", fontSize:12, fontWeight:700, cursor:"pointer", letterSpacing:0.5 }),
     card:    { background:"#141414", border:"1px solid #1e1e1e", borderRadius:14, padding:20, marginBottom:16 },
-    label:   { fontSize:10, fontWeight:600, color:"#666", letterSpacing:1.5, display:"block", marginBottom:6, textTransform:"uppercase" },
+    label:   { fontSize:10, fontWeight:600, color:"#888", letterSpacing:1.5, display:"block", marginBottom:6, textTransform:"uppercase" },
     input:   { width:"100%", padding:"10px 12px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:8, fontSize:13, color:"#fff", boxSizing:"border-box", outline:"none", marginBottom:10 },
     btn:     { background:"#fff", color:"#000", border:"none", padding:"10px 20px", borderRadius:8, fontSize:13, fontWeight:700, cursor:"pointer" },
-    btnSm:   { background:"#1a1a1a", color:"#888", border:"1px solid #2a2a2a", padding:"4px 10px", borderRadius:6, fontSize:11, cursor:"pointer" },
+    btnSm:   { background:"#1a1a1a", color:"#aaa", border:"1px solid #2a2a2a", padding:"4px 10px", borderRadius:6, fontSize:11, cursor:"pointer" },
     btnRed:  { background:"#1a0a0a", color:"#ff6b6b", border:"1px solid #3d1515", padding:"4px 10px", borderRadius:6, fontSize:11, cursor:"pointer" },
-    section: { fontWeight:700, fontSize:11, color:"#555", letterSpacing:2, textTransform:"uppercase", marginBottom:12 },
+    section: { fontWeight:700, fontSize:11, color:"#888", letterSpacing:2, textTransform:"uppercase", marginBottom:12 },
     row:     { display:"flex", justifyContent:"space-between", alignItems:"center", padding:"10px 0", borderBottom:"1px solid #1a1a1a", fontSize:13 },
     msg:     { background:"#0a1e0a", border:"1px solid #1a3d1a", borderRadius:8, padding:"10px 14px", color:"#6bff6b", fontSize:12, marginBottom:12 },
     err:     { background:"#1e0a0a", border:"1px solid #3d1515", borderRadius:8, padding:"10px 14px", color:"#ff6b6b", fontSize:12, marginBottom:12 },
@@ -2156,7 +2232,7 @@ function AdminPanel({ onExit }) {
       <div style={{ ...a.wrap, display:"flex", alignItems:"center", justifyContent:"center" }}>
         <div style={{ background:"#141414", border:"1px solid #2a2a2a", borderRadius:20, padding:"40px 32px", width:"100%", maxWidth:360 }}>
           <div style={a.logo}>UPSIDIAN</div>
-          <div style={{ fontSize:10, color:"#444", letterSpacing:1.5, marginBottom:28 }}>ADMIN PANEL</div>
+          <div style={{ fontSize:10, color:"#888", letterSpacing:1.5, marginBottom:28 }}>ADMIN PANEL</div>
           <div style={{ fontSize:16, fontWeight:700, marginBottom:20 }}>Admin Access</div>
           {pwErr && <div style={a.err}>{pwErr}</div>}
           <label style={a.label}>Admin Password</label>
@@ -2182,7 +2258,7 @@ function AdminPanel({ onExit }) {
       <div style={a.header}>
         <div>
           <div style={a.logo}>UPSIDIAN</div>
-          <div style={{ fontSize:10, color:"#444", letterSpacing:1.5 }}>ADMIN PANEL</div>
+          <div style={{ fontSize:10, color:"#888", letterSpacing:1.5 }}>ADMIN PANEL</div>
         </div>
         <div style={{ display:"flex", gap:8 }}>
           <button style={a.btnSm} onClick={load}>Refresh</button>
@@ -2194,8 +2270,8 @@ function AdminPanel({ onExit }) {
       <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:12, marginBottom:24 }}>
         {[
           { label:"Estates", value: estates.length },
-          { label:"Approved Residents", value: residents.length || "—" },
           { label:"Signed Up Users", value: users.filter(u => u.role === "resident").length },
+          { label:"Open Messages", value: messages.filter(m => m.status === "open").length || "0" },
         ].map(s => (
           <div key={s.label} style={{ background:"#141414", border:"1px solid #1e1e1e", borderRadius:12, padding:16 }}>
             <div style={{ fontSize:26, fontWeight:800 }}>{s.value}</div>
@@ -2205,11 +2281,12 @@ function AdminPanel({ onExit }) {
       </div>
 
       {/* Tabs */}
-      <div style={{ display:"flex", gap:8, marginBottom:20 }}>
+      <div style={{ display:"flex", gap:8, marginBottom:20, flexWrap:"wrap" }}>
         {[
           { id:"estates",   label:"Estates" },
           { id:"residents", label:"Access" },
           { id:"users",     label:"Users" },
+          { id:"messages",  label: messages.filter(m => m.status === "open").length > 0 ? "Messages (" + messages.filter(m => m.status === "open").length + ")" : "Messages" },
         ].map(t => (
           <button key={t.id} style={a.tab(view === t.id)} onClick={() => setView(t.id)}>
             {t.label}
@@ -2383,6 +2460,65 @@ function AdminPanel({ onExit }) {
                 </>
               )}
             </>
+          )}
+        </div>
+      )}
+
+      {/* ── MESSAGES TAB ── */}
+      {view === "messages" && (
+        <div style={a.card}>
+          <div style={a.section}>
+            User Messages ({messages.filter(m => m.status === "open").length} open)
+          </div>
+          {messages.length === 0 ? (
+            <div style={{ color:"#555", fontSize:13 }}>No messages yet.</div>
+          ) : (
+            messages.map(m => (
+              <div key={m.id} style={{ padding:"12px 0", borderBottom:"1px solid #1a1a1a" }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:6 }}>
+                  <div>
+                    <div style={{ fontSize:13, fontWeight:600, color: m.status === "resolved" ? "#555" : "#e0e0e0" }}>
+                      {m.user_name}
+                    </div>
+                    <div style={{ fontSize:11, color:"#444", marginTop:1 }}>
+                      {m.user_email} &middot; {estates.find(e => e.id === m.estate_id)?.name || m.estate_id}
+                    </div>
+                    <div style={{ fontSize:11, color:"#333", marginTop:1 }}>
+                      {new Date(m.created_at).toLocaleDateString("en-NG", { day:"numeric", month:"short", year:"numeric", hour:"2-digit", minute:"2-digit" })}
+                    </div>
+                  </div>
+                  <span style={{
+                    fontSize:10, fontWeight:700, letterSpacing:0.5, padding:"3px 8px", borderRadius:20,
+                    background: m.status === "resolved" ? "#0a1e0a" : "#1a150a",
+                    color: m.status === "resolved" ? "#6bff6b" : "#c8860a",
+                    border: m.status === "resolved" ? "1px solid #1a3d1a" : "1px solid #3d2e10",
+                    whiteSpace:"nowrap",
+                  }}>
+                    {m.status === "resolved" ? "Resolved" : "Open"}
+                  </span>
+                </div>
+                <div style={{ fontSize:13, color:"#888", lineHeight:1.6, margin:"8px 0 10px" }}>
+                  {m.message}
+                </div>
+                <div style={{ display:"flex", gap:8 }}>
+                  {m.status === "open" && (
+                    <button style={a.btnSm} onClick={async () => {
+                      await dbResolveMessage(m.id);
+                      const updated = await dbGetMessages();
+                      setMessages(updated);
+                    }}>
+                      ✓ Mark Resolved
+                    </button>
+                  )}
+                  <button style={a.btnRed} onClick={async () => {
+                    await dbDeleteMessage(m.id);
+                    setMessages(prev => prev.filter(x => x.id !== m.id));
+                  }}>
+                    Delete
+                  </button>
+                </div>
+              </div>
+            ))
           )}
         </div>
       )}
