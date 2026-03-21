@@ -9,7 +9,7 @@
 html {
   height: 100%;
   height: -webkit-fill-available; /* fills Safari's address bar gap */
-  background: #0a0a0a;
+  background: #141414; /* matches header so status bar blends in */
 }
 
 body {

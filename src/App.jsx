@@ -303,7 +303,7 @@ const c = {
   page:      { fontFamily:"'DM Sans','Helvetica Neue',sans-serif", minHeight:"100dvh", background:"#0a0a0a", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"24px" },
   authCard:  { background:"#141414", border:"1px solid #2a2a2a", borderRadius:20, padding:"40px 32px", width:"100%", maxWidth:390 },
   appWrap:   { fontFamily:"'DM Sans','Helvetica Neue',sans-serif", maxWidth:430, width:"100%", margin:"0 auto", height:"100dvh", maxHeight:"100dvh", background:"#0f0f0f", display:"flex", flexDirection:"column", color:"#fff", position:"relative", overflow:"hidden" },
-  header:    { background:"#141414", borderBottom:"1px solid #1e1e1e", padding:"16px 20px", display:"flex", alignItems:"center", justifyContent:"space-between" },
+  header:    { background:"#141414", borderBottom:"1px solid #1e1e1e", paddingTop:"calc(16px + env(safe-area-inset-top))", paddingBottom:"16px", paddingLeft:"20px", paddingRight:"20px", display:"flex", alignItems:"center", justifyContent:"space-between" },
   content:   { flex:1, padding:16, overflowY:"auto", overflowX:"hidden", WebkitOverflowScrolling:"touch" },
   bottomNav: { display:"flex", background:"#141414", borderTop:"1px solid #1e1e1e", padding:"6px 0", paddingBottom:"calc(6px + env(safe-area-inset-bottom))" },
 
