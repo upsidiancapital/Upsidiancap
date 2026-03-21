@@ -99,6 +99,11 @@ async function dbDeactivateEstate(id) {
   if (error) { console.error("dbDeactivateEstate:", error); return false; }
   return true;
 }
+async function dbUpdateEstateCode(id, newCode) {
+  const { error } = await supabase.from("estates").update({ security_code: newCode }).eq("id", id);
+  if (error) { console.error("dbUpdateEstateCode:", error); return false; }
+  return true;
+}
 
 // ADMIN — approved residents management
 async function dbGetApprovedResidents(estateId) {
@@ -502,7 +507,7 @@ function PwInput({ placeholder, value, onChange, onKeyDown, style }) {
 function AuthScreen({ onLogin, onLogoTap = () => {} }) {
   const [mode, setMode]   = useState("login");
   const [role, setRole]   = useState("resident");
-  const [form, setForm]   = useState({ name:"", email:"", password:"", confirm:"", estateId:"", estateCode:"", adminCode:"" });
+  const [form, setForm]   = useState({ firstName:"", lastName:"", email:"", password:"", confirm:"", estateId:"", estateCode:"", adminCode:"" });
   const [error, setError]     = useState("");
   const [success, setSuccess] = useState("");
 
@@ -531,7 +536,7 @@ function AuthScreen({ onLogin, onLogoTap = () => {} }) {
     const requiresAdminCode = role === "security";
 
     // Basic validation
-    if (!form.name || !form.email || !form.password)
+    if (!form.firstName.trim() || !form.lastName.trim() || !form.email || !form.password)
       return setError("Name, email and password are required.");
     if (form.password !== form.confirm) return setError("Passwords do not match.");
     if (form.password.length < 6) return setError("Password must be at least 6 characters.");
@@ -579,7 +584,7 @@ function AuthScreen({ onLogin, onLogoTap = () => {} }) {
     // Save profile in users table
     const newUser = {
       email: form.email.trim().toLowerCase(),
-      name: form.name,
+      name: (form.firstName.trim() + " " + form.lastName.trim()),
       estateId: resolvedEstateId,
       role,
       unitName: resolvedUnitName,
@@ -602,7 +607,7 @@ function AuthScreen({ onLogin, onLogoTap = () => {} }) {
       ". You can now sign in."
     );
     setMode("login");
-    setForm({ name:"", email:form.email, password:"", confirm:"", estateId:"", estateCode:"", adminCode:"" });
+    setForm({ firstName:"", lastName:"", email:form.email, password:"", confirm:"", estateId:"", estateCode:"", adminCode:"" });
   };
 
   if (mode === "forgot") return <ForgotPasswordScreen onBack={goLogin} />;
@@ -628,8 +633,10 @@ function AuthScreen({ onLogin, onLogoTap = () => {} }) {
               <button style={c.roleBtn(role === "resident")} onClick={() => setRole("resident")}>Resident</button>
               <button style={c.roleBtn(role === "security")} onClick={() => setRole("security")}>Security</button>
             </div>
-            <label style={c.label}>Full Name</label>
-            <input style={c.input} placeholder="e.g. Adeola Martins" value={form.name} onChange={set("name")} />
+            <label style={c.label}>First Name</label>
+            <input style={c.input} placeholder="e.g. Adeola" value={form.firstName} onChange={set("firstName")} />
+            <label style={c.label}>Last Name</label>
+            <input style={c.input} placeholder="e.g. Martins" value={form.lastName} onChange={set("lastName")} />
           </div>
         )}
 
@@ -858,7 +865,6 @@ function ResidentApp({ user, onLogout, onUserUpdate }) {
     guestName:"", purpose:"",
     day:"", month:"", year:"",
     fromHour:"", fromMin:"", toHour:"", toMin:"",
-    residentId:1,
   });
   const [inviteErr, setInviteErr]       = useState("");
   const [codeModal, setCodeModal] = useState(null); // popup for newly created invite
@@ -892,7 +898,6 @@ function ResidentApp({ user, onLogout, onUserUpdate }) {
       String(today.getDate()).padStart(2,"0");
     if (date < todayStr) return setInviteErr("Visit date cannot be in the past.");
 
-    const resident  = RESIDENTS.find((r) => r.id === Number(inviteForm.residentId));
     const newInvite = {
       id: Date.now(),
       guestName:    inviteForm.guestName,
@@ -900,9 +905,9 @@ function ResidentApp({ user, onLogout, onUserUpdate }) {
       date,
       timeFrom,
       timeTo,
-      residentId:   inviteForm.residentId,
-      residentName: resident?.name,
-      residentUnit: resident?.unit,
+      residentId:   null,
+      residentName: user.name,
+      residentUnit: user.unitName || "—",
       createdBy:    user.email,
       estateId:     user.estateId,
       code:         generateCode(),
@@ -913,7 +918,7 @@ function ResidentApp({ user, onLogout, onUserUpdate }) {
     const updated = await dbGetInvites(user.estateId);
     setInvites(updated);
     setCodeModal(newInvite);
-    setInviteForm({ guestName:"", purpose:"", day:"", month:"", year:"", fromHour:"", fromMin:"", toHour:"", toMin:"", residentId:1 });
+    setInviteForm({ guestName:"", purpose:"", day:"", month:"", year:"", fromHour:"", fromMin:"", toHour:"", toMin:"" });
   };
 
   const myInvites = invites.filter((i) => i.createdBy === user.email);
@@ -1289,15 +1294,11 @@ function ResidentApp({ user, onLogout, onUserUpdate }) {
               Your visitor can only check in within this time window on the selected date. The gate will reject the code outside these hours.
             </div>
 
-            {/* Resident */}
-            <label style={c.label}>Resident</label>
-            <select value={inviteForm.residentId}
-              onChange={(e) => setInviteForm({ ...inviteForm, residentId: Number(e.target.value) })}
-              style={c.select}>
-              {RESIDENTS.map((r) => (
-                <option key={r.id} value={r.id}>{r.name} – {r.unit}</option>
-              ))}
-            </select>
+            {/* Resident info — auto-filled from logged in user */}
+            <div style={{ background:"#0a0a0a", border:"1px solid #1e1e1e", borderRadius:10, padding:"10px 14px", marginBottom:14 }}>
+              <div style={{ fontSize:10, color:"#333", letterSpacing:1.5, textTransform:"uppercase", marginBottom:4 }}>Visiting</div>
+              <div style={{ fontSize:13, color:"#888" }}>{user.name} &middot; {user.unitName || "Your unit"}</div>
+            </div>
 
             <button style={c.btnApp} onClick={createInvite}>Generate Invite Code &rarr;</button>
 
@@ -1785,6 +1786,54 @@ function AdminPanel({ onExit }) {
   const [bulkText, setBulkText]   = useState("");
   const [bulkMsg, setBulkMsg]     = useState("");
 
+  // Inline estate row with editable code
+  const EstateRow = ({ estate: e, onRefresh }) => {
+    const [editing, setEditing] = useState(false);
+    const [newCode, setNewCode] = useState(e.code);
+    const [saving, setSaving]   = useState(false);
+    const save = async () => {
+      if (!newCode.trim()) return;
+      setSaving(true);
+      await dbUpdateEstateCode(e.id, newCode.trim());
+      setSaving(false);
+      setEditing(false);
+      onRefresh();
+    };
+    return (
+      <div style={{ ...a.row, flexDirection:"column", alignItems:"flex-start", gap:8 }}>
+        <div style={{ display:"flex", justifyContent:"space-between", width:"100%", alignItems:"center" }}>
+          <div>
+            <div style={{ fontWeight:600, color:"#e0e0e0" }}>{e.name}</div>
+            <div style={{ fontSize:11, color:"#444" }}>ID: {e.id}</div>
+          </div>
+          <div style={{ display:"flex", gap:6 }}>
+            <button style={a.btnSm} onClick={() => setEditing(v => !v)}>
+              {editing ? "Cancel" : "Edit Code"}
+            </button>
+            <button style={a.btnRed} onClick={async () => { await dbDeactivateEstate(e.id); onRefresh(); }}>
+              Deactivate
+            </button>
+          </div>
+        </div>
+        {editing ? (
+          <div style={{ display:"flex", gap:8, width:"100%", alignItems:"center" }}>
+            <input
+              value={newCode}
+              onChange={e => setNewCode(e.target.value)}
+              style={{ ...a.input, marginBottom:0, flex:1, fontSize:12 }}
+              placeholder="New security code"
+            />
+            <button style={a.btn} onClick={save} disabled={saving}>
+              {saving ? "Saving..." : "Save"}
+            </button>
+          </div>
+        ) : (
+          <div style={{ fontSize:11, color:"#555" }}>Security code: <span style={{ color:"#777" }}>{e.code}</span></div>
+        )}
+      </div>
+    );
+  };
+
   const load = async () => {
     setLoading(true);
     const [e, u] = await Promise.all([dbGetEstates(), dbGetAllUsersAdmin()]);
@@ -1944,17 +1993,7 @@ function AdminPanel({ onExit }) {
             <div style={a.section}>All Estates ({estates.length})</div>
             {loading ? <div style={{ color:"#333", fontSize:13 }}>Loading...</div> :
               estates.length === 0 ? <div style={{ color:"#333", fontSize:13 }}>No estates yet.</div> :
-              estates.map(e => (
-                <div key={e.id} style={a.row}>
-                  <div>
-                    <div style={{ fontWeight:600, color:"#e0e0e0" }}>{e.name}</div>
-                    <div style={{ fontSize:11, color:"#444" }}>ID: {e.id} &nbsp;&middot;&nbsp; Security code: {e.code}</div>
-                  </div>
-                  <button style={a.btnRed} onClick={async () => { await dbDeactivateEstate(e.id); load(); }}>
-                    Deactivate
-                  </button>
-                </div>
-              ))
+              estates.map(e => <EstateRow key={e.id} estate={e} onRefresh={load} />)
             }
           </div>
         </div>
