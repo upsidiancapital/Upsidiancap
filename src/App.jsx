@@ -962,14 +962,14 @@ function SecurityApp({ user, onLogout }) {
         {/* Verify panel */}
         <div style={{ background:"#141414", border:"1px solid #1e1e1e", borderRadius:16, padding:20, marginBottom:20 }}>
           <div style={{ fontWeight:700, fontSize:16, marginBottom:4 }}>Verify Guest Access</div>
-          <div style={{ color:"#555", fontSize:13, marginBottom:18 }}>Enter the 6-character code from the resident's invite.</div>
+          <div style={{ color:"#555", fontSize:13, marginBottom:18 }}>Enter the invite code (6 chars) or staff code (8 chars).</div>
           <div style={{ display:"flex", gap:8, marginBottom:6 }}>
             <input
               value={gateCode}
               onChange={(e) => setGateCode(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && verify()}
               placeholder="AB12CD"
-              maxLength={6}
+              maxLength={8}
               style={c.gateInput}
             />
             <button style={c.btnVerify} onClick={verify} disabled={loading}>
@@ -2226,11 +2226,11 @@ function SecurityAppWithProfile({ user, onLogout, onUserUpdate }) {
 
             <div style={{ background:"#141414", border:"1px solid #1e1e1e", borderRadius:16, padding:20, marginBottom:20 }}>
               <div style={{ fontWeight:700, fontSize:16, marginBottom:4 }}>Verify Guest Access</div>
-              <div style={{ color:"#555", fontSize:13, marginBottom:18 }}>Enter the 6-character code from the resident's invite.</div>
+              <div style={{ color:"#555", fontSize:13, marginBottom:18 }}>Enter the invite code (6 chars) or staff code (8 chars).</div>
               <div style={{ display:"flex", gap:8, marginBottom:6, width:"100%" }}>
                 <input value={gateCode} onChange={(e) => setGateCode(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && verify()}
-                  placeholder="AB12CD" maxLength={6} style={c.gateInput} />
+                  placeholder="AB12CD" maxLength={8} style={c.gateInput} />
                 <button style={c.btnVerify} onClick={verify} disabled={loading}>
                   {loading ? "..." : "Verify"}
                 </button>
