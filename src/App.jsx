@@ -1163,14 +1163,8 @@ function ResidentApp({ user, onLogout, onUserUpdate }) {
         </div>
         <div style={{ ...c.codeBox, position:"relative" }}>
           <div style={{ fontSize:10, color:"#333", letterSpacing:1.5, textTransform:"uppercase", marginBottom:4 }}>Access Code</div>
-          {codesVisible ? (
-            <>
-              <div style={{ fontSize:24, fontWeight:800, letterSpacing:6, color:"#fff" }}>{inv.code}</div>
-              <CopyButton text={inv.code} />
-            </>
-          ) : (
-            <div style={{ fontSize:14, color:"#333", letterSpacing:2 }}>••••••</div>
-          )}
+          <div style={{ fontSize:24, fontWeight:800, letterSpacing:6, color:"#fff" }}>{inv.code}</div>
+          <CopyButton text={inv.code} />
         </div>
 
         {/* Normal action row */}
@@ -1256,13 +1250,13 @@ function ResidentApp({ user, onLogout, onUserUpdate }) {
 
             <div style={{ marginTop:20 }}>
               <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
-                <div style={c.section} style={{ marginBottom:0 }}>Your Recent Invites</div>
+                <div style={c.section}>Your Recent Invites</div>
                 {myInvites.length > 0 && (
                   <button
                     onClick={() => setCodesVisible(v => !v)}
                     style={{ background:"none", border:"1px solid #2a2a2a", color:"#555", borderRadius:6, padding:"4px 10px", fontSize:11, cursor:"pointer", letterSpacing:0.5 }}
                   >
-                    {codesVisible ? "Hide Codes" : "Show Codes"}
+                    {codesVisible ? "Hide" : "Show"}
                   </button>
                 )}
               </div>
@@ -1280,7 +1274,7 @@ function ResidentApp({ user, onLogout, onUserUpdate }) {
                     Create First Invite
                   </button>
                 </div>
-              ) : (
+              ) : codesVisible ? (
                 <>
                   {myInvites.filter((i) => !hiddenIds.includes(i.id)).slice(0, 3).map((inv) => <InviteCard key={inv.id} inv={inv} />)}
                   {myInvites.filter((i) => !hiddenIds.includes(i.id)).length > 3 && (
@@ -1292,6 +1286,15 @@ function ResidentApp({ user, onLogout, onUserUpdate }) {
                     </button>
                   )}
                 </>
+              ) : (
+                <div style={{ background:"#141414", border:"1px solid #1e1e1e", borderRadius:10, padding:"12px 14px", textAlign:"center" }}>
+                  <div style={{ fontSize:12, color:"#333" }}>
+                    {myInvites.length} invite{myInvites.length !== 1 ? "s" : ""} hidden &middot;{" "}
+                    <button onClick={() => setCodesVisible(true)} style={{ background:"none", border:"none", color:"#555", fontSize:12, cursor:"pointer", textDecoration:"underline", padding:0 }}>
+                      Show
+                    </button>
+                  </div>
+                </div>
               )}
             </div>
           </div>
@@ -1861,8 +1864,13 @@ function SecurityAppWithProfile({ user, onLogout, onUserUpdate }) {
               </div>
             </div>
             {!logVisible ? (
-              <div style={{ color:"#333", fontSize:13, padding:"10px 0", textAlign:"center" }}>
-                Log hidden — tap Show to reveal
+              <div style={{ background:"#141414", border:"1px solid #1e1e1e", borderRadius:10, padding:"12px 14px", textAlign:"center" }}>
+                <div style={{ fontSize:12, color:"#333" }}>
+                  {accessLog.length} check-in{accessLog.length !== 1 ? "s" : ""} hidden &middot;{" "}
+                  <button onClick={() => setLogVisible(true)} style={{ background:"none", border:"none", color:"#555", fontSize:12, cursor:"pointer", textDecoration:"underline", padding:0 }}>
+                    Show
+                  </button>
+                </div>
               </div>
             ) : accessLog.filter((l) => !hiddenLogIds.includes(l.id)).length === 0 ? (
               <div style={{ color:"#2a2a2a", fontSize:13, padding:"12px 0" }}>
