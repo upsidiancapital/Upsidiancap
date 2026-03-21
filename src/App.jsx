@@ -328,17 +328,8 @@ function ResetPasswordScreen({ onDone }) {
   const [error, setError]   = useState("");
   const [ok, setOk]         = useState(false);
   const [loading, setLoading] = useState(false);
-  const [ready, setReady]   = useState(false); // true once Supabase confirms the session
-
-  useEffect(() => {
-    // Supabase fires an auth state change when the reset link is opened
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
-      if (event === "PASSWORD_RECOVERY") {
-        setReady(true);
-      }
-    });
-    return () => subscription.unsubscribe();
-  }, []);
+  // Root already verified PASSWORD_RECOVERY before rendering this component
+  // so we show the form immediately — no need to wait again
 
   const handleReset = async () => {
     setError("");
@@ -354,7 +345,7 @@ function ResetPasswordScreen({ onDone }) {
       return setError("Failed to update password. Please try again.");
     }
 
-    // Also update in our own users table so login still works
+    // Also sync to our users table
     const { data: { user: authUser } } = await supabase.auth.getUser();
     if (authUser?.email) {
       await dbUpdatePassword(authUser.email, form.newPw);
@@ -364,17 +355,6 @@ function ResetPasswordScreen({ onDone }) {
     setLoading(false);
     setOk(true);
   };
-
-  if (!ready) {
-    return (
-      <div style={c.page}>
-        <div style={c.authCard}>
-          <div style={c.logo}>UPSIDIAN</div>
-          <div style={{ color:"#555", fontSize:13, marginTop:16 }}>Verifying reset link...</div>
-        </div>
-      </div>
-    );
-  }
 
   if (ok) {
     return (
@@ -1661,12 +1641,22 @@ function SecurityAppWithProfile({ user, onLogout, onUserUpdate }) {
 export default function UpsidianApp() {
   const [user, setUser]           = useState(null);
   const [showReset, setShowReset] = useState(false);
+  const [checking, setChecking]   = useState(true);
   const logout      = () => setUser(null);
   const updateUser  = (updated) => setUser(updated);
 
   useEffect(() => {
-    // Supabase puts recovery tokens in the URL hash when user clicks reset link
-    // Listen for the PASSWORD_RECOVERY event and show the reset screen
+    // Check URL hash immediately on load — Supabase puts recovery tokens here
+    const hash = window.location.hash;
+    if (hash.includes("type=recovery")) {
+      setShowReset(true);
+      setChecking(false);
+      return;
+    }
+
+    setChecking(false);
+
+    // Also listen for the event firing after mount
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
       if (event === "PASSWORD_RECOVERY") {
         setShowReset(true);
@@ -1674,6 +1664,8 @@ export default function UpsidianApp() {
     });
     return () => subscription.unsubscribe();
   }, []);
+
+  if (checking) return null;
 
   if (showReset) {
     return (
