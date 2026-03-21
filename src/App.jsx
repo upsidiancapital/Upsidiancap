@@ -274,6 +274,7 @@ async function dbAddStaff(staff) {
     phone: staff.phone,
     photo_url: staff.photoUrl || null,
     code: staff.code,
+    resident_unit: staff.residentUnit || null,
     active: true,
   });
   if (error) { console.error("dbAddStaff:", error); return false; }
@@ -301,7 +302,8 @@ async function dbUploadStaffPhoto(file, staffCode) {
   const { error } = await supabase.storage.from("staff-photos").upload(path, file, { upsert: true });
   if (error) { console.error("dbUploadStaffPhoto:", error); return null; }
   const { data } = supabase.storage.from("staff-photos").getPublicUrl(path);
-  return data.publicUrl;
+  // Add cache-busting so the image loads fresh immediately after upload
+  return data.publicUrl + "?t=" + Date.now();
 }
 
 // MESSAGES
@@ -1754,6 +1756,7 @@ function StaffSection({ user }) {
       phone: form.phone.trim(),
       photoUrl,
       code,
+      residentUnit: user.unitName || null,
     };
 
     const ok = await dbAddStaff(newStaff);
@@ -2278,22 +2281,30 @@ function SecurityAppWithProfile({ user, onLogout, onUserUpdate }) {
                   {gateResult.type === "staffGranted" && (
                     <div style={c.granted}>
                       <div style={{ color:"#6bff6b", fontWeight:700, fontSize:15, marginBottom:12 }}>✓ Staff Access Granted</div>
-                      <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:10 }}>
-                        <div style={{ width:48, height:48, borderRadius:"50%", background:"#1a1a1a", border:"1px solid #2a2a2a", overflow:"hidden", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center" }}>
+                      <div style={{ display:"flex", alignItems:"center", gap:14, marginBottom:12 }}>
+                        {/* Photo — larger for gate visibility */}
+                        <div style={{ width:64, height:64, borderRadius:"50%", background:"#1a1a1a", border:"2px solid #1a3d1a", overflow:"hidden", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center" }}>
                           {gateResult.staff.photo_url
-                            ? <img src={gateResult.staff.photo_url} alt={gateResult.staff.full_name} style={{ width:"100%", height:"100%", objectFit:"cover" }} />
-                            : <svg viewBox="0 0 24 24" width="26" height="26" fill="#444"><path d="M12 12c2.7 0 4.8-2.1 4.8-4.8S14.7 2.4 12 2.4 7.2 4.5 7.2 7.2 9.3 12 12 12zm0 2.4c-3.2 0-9.6 1.6-9.6 4.8v2.4h19.2v-2.4c0-3.2-6.4-4.8-9.6-4.8z"/></svg>
+                            ? <img
+                                src={gateResult.staff.photo_url}
+                                alt={gateResult.staff.full_name}
+                                style={{ width:"100%", height:"100%", objectFit:"cover" }}
+                                onError={(e) => { e.target.style.display="none"; }}
+                              />
+                            : <svg viewBox="0 0 24 24" width="32" height="32" fill="#444"><path d="M12 12c2.7 0 4.8-2.1 4.8-4.8S14.7 2.4 12 2.4 7.2 4.5 7.2 7.2 9.3 12 12 12zm0 2.4c-3.2 0-9.6 1.6-9.6 4.8v2.4h19.2v-2.4c0-3.2-6.4-4.8-9.6-4.8z"/></svg>
                           }
                         </div>
                         <div>
-                          <div style={{ fontWeight:700, fontSize:14, color:"#fff" }}>{gateResult.staff.full_name}</div>
-                          <div style={{ fontSize:11, color:"#555", marginTop:2 }}>{gateResult.staff.phone}</div>
+                          <div style={{ fontWeight:700, fontSize:16, color:"#fff" }}>{gateResult.staff.full_name}</div>
+                          <div style={{ fontSize:12, color:"#555", marginTop:2 }}>{gateResult.staff.phone}</div>
                         </div>
                       </div>
                       {[
-                        ["Type",   "Registered Staff"],
-                        ["Code",   gateResult.staff.code],
-                        ["Access", "Permanent — Active"],
+                        ["Type",    "Registered Staff"],
+                        ["Unit",    gateResult.staff.resident_unit || "—"],
+                        ["Code",    gateResult.staff.code],
+                        ["Entry",   new Date().toLocaleTimeString("en-NG", { timeZone:"Africa/Lagos", hour:"2-digit", minute:"2-digit", second:"2-digit" }) + " WAT"],
+                        ["Access",  "Permanent — Active"],
                       ].map(([k, v]) => (
                         <div key={k} style={{ fontSize:13, color:"#888", marginBottom:4 }}>
                           <span style={{ color:"#333", display:"inline-block", minWidth:64 }}>{k}</span>{v}
