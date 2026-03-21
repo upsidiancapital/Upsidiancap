@@ -136,6 +136,14 @@ async function dbGetAllUsersAdmin() {
   if (error) { console.error("dbGetAllUsersAdmin:", error); return []; }
   return data || [];
 }
+async function dbDeleteUser(email) {
+  // Delete from our users table — Supabase Auth account stays (can be cleaned manually)
+  const { error } = await supabase.from("users").delete().eq("email", email);
+  if (error) { console.error("dbDeleteUser:", error); return false; }
+  // Also reset their approved_residents entry so they can re-register if needed
+  await supabase.from("approved_residents").update({ used: false }).eq("email", email);
+  return true;
+}
 
 // USERS
 async function dbGetUserByEmail(email) {
@@ -1774,7 +1782,9 @@ function AdminPanel({ onExit }) {
   const [estates, setEstates]     = useState([]);
   const [residents, setResidents] = useState([]);
   const [users, setUsers]         = useState([]);
-  const [selEstate, setSelEstate] = useState("");
+  const [selEstate, setSelEstate]       = useState("");
+  const [userEstateFilter, setUserEstateFilter] = useState(""); // filter users by estate
+  const [confirmDeleteUser, setConfirmDeleteUser] = useState(null); // email of user pending delete
   const [loading, setLoading]     = useState(false);
   const [msg, setMsg]             = useState("");
 
@@ -2079,23 +2089,107 @@ function AdminPanel({ onExit }) {
 
       {/* ── USERS TAB ── */}
       {view === "users" && (
-        <div style={a.card}>
-          <div style={a.section}>All Signed Up Users ({users.length})</div>
-          {loading ? <div style={{ color:"#333", fontSize:13 }}>Loading...</div> :
-            users.length === 0 ? <div style={{ color:"#333", fontSize:13 }}>No users yet.</div> :
-            users.map(u => (
-              <div key={u.id} style={a.row}>
-                <div>
-                  <div style={{ fontSize:13, color:"#e0e0e0", fontWeight:600 }}>{u.name}</div>
-                  <div style={{ fontSize:11, color:"#444" }}>
-                    {u.email} &nbsp;&middot;&nbsp; {u.estate_id} &nbsp;&middot;&nbsp;
-                    {u.unit_name || "—"} &nbsp;&middot;&nbsp;
-                    <span style={{ color: u.role === "security" ? "#c8860a" : "#888" }}>{u.role}</span>
+        <div>
+          {/* Estate filter */}
+          <div style={a.card}>
+            <div style={a.section}>Filter by Estate</div>
+            <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+              <button
+                style={{ ...a.btnSm, background: userEstateFilter === "" ? "#fff" : "#1a1a1a", color: userEstateFilter === "" ? "#000" : "#555" }}
+                onClick={() => setUserEstateFilter("")}
+              >
+                All ({users.length})
+              </button>
+              {estates.map(e => {
+                const count = users.filter(u => u.estate_id === e.id).length;
+                return (
+                  <button
+                    key={e.id}
+                    style={{ ...a.btnSm, background: userEstateFilter === e.id ? "#fff" : "#1a1a1a", color: userEstateFilter === e.id ? "#000" : "#555" }}
+                    onClick={() => setUserEstateFilter(e.id)}
+                  >
+                    {e.name} ({count})
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* User list */}
+          <div style={a.card}>
+            {(() => {
+              const filtered = userEstateFilter
+                ? users.filter(u => u.estate_id === userEstateFilter)
+                : users;
+              const estName = estates.find(e => e.id === userEstateFilter)?.name;
+              return (
+                <>
+                  <div style={a.section}>
+                    {userEstateFilter ? estName + " Users" : "All Users"} ({filtered.length})
                   </div>
-                </div>
-              </div>
-            ))
-          }
+                  {loading ? (
+                    <div style={{ color:"#333", fontSize:13 }}>Loading...</div>
+                  ) : filtered.length === 0 ? (
+                    <div style={{ color:"#333", fontSize:13 }}>No users in this estate yet.</div>
+                  ) : (
+                    filtered.map(u => (
+                      <div key={u.id}>
+                        <div style={a.row}>
+                          <div>
+                            <div style={{ fontSize:13, color:"#e0e0e0", fontWeight:600 }}>{u.name}</div>
+                            <div style={{ fontSize:11, color:"#444", marginTop:2 }}>
+                              {u.email}
+                            </div>
+                            <div style={{ fontSize:11, color:"#333", marginTop:1 }}>
+                              {estates.find(e => e.id === u.estate_id)?.name || u.estate_id}
+                              {u.unit_name ? " · " + u.unit_name : ""}
+                              {" · "}
+                              <span style={{ color: u.role === "security" ? "#c8860a" : "#666" }}>{u.role}</span>
+                            </div>
+                          </div>
+                          <button
+                            style={a.btnRed}
+                            onClick={() => setConfirmDeleteUser(u.email)}
+                          >
+                            Delete
+                          </button>
+                        </div>
+
+                        {/* Inline confirm delete */}
+                        {confirmDeleteUser === u.email && (
+                          <div style={{ background:"#1a0a0a", border:"1px solid #3d1515", borderRadius:8, padding:"10px 12px", marginBottom:8 }}>
+                            <div style={{ fontSize:12, color:"#ff6b6b", marginBottom:8 }}>
+                              Delete {u.name}? This removes them from the app. Their approved resident slot will be reset so they can re-register.
+                            </div>
+                            <div style={{ display:"flex", gap:8 }}>
+                              <button
+                                style={{ ...a.btnSm, flex:1 }}
+                                onClick={() => setConfirmDeleteUser(null)}
+                              >
+                                Cancel
+                              </button>
+                              <button
+                                style={{ ...a.btnRed, flex:1, padding:"6px 0", fontWeight:700 }}
+                                onClick={async () => {
+                                  await dbDeleteUser(u.email);
+                                  setConfirmDeleteUser(null);
+                                  const updated = await dbGetAllUsersAdmin();
+                                  setUsers(updated);
+                                  setMsg("User " + u.name + " deleted.");
+                                }}
+                              >
+                                Yes, Delete
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ))
+                  )}
+                </>
+              );
+            })()}
+          </div>
         </div>
       )}
     </div>
