@@ -300,12 +300,12 @@ async function dbDeleteResetToken(token) {
 // ─── Shared styles ────────────────────────────────────────────────────────────
 
 const c = {
-  page:      { fontFamily:"'DM Sans','Helvetica Neue',sans-serif", minHeight:"100vh", background:"#0a0a0a", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"24px" },
+  page:      { fontFamily:"'DM Sans','Helvetica Neue',sans-serif", minHeight:"100dvh", background:"#0a0a0a", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"24px" },
   authCard:  { background:"#141414", border:"1px solid #2a2a2a", borderRadius:20, padding:"40px 32px", width:"100%", maxWidth:390 },
-  appWrap:   { fontFamily:"'DM Sans','Helvetica Neue',sans-serif", maxWidth:430, margin:"0 auto", minHeight:"100vh", background:"#0f0f0f", display:"flex", flexDirection:"column", color:"#fff" },
+  appWrap:   { fontFamily:"'DM Sans','Helvetica Neue',sans-serif", maxWidth:430, margin:"0 auto", minHeight:"100dvh", background:"#0f0f0f", display:"flex", flexDirection:"column", color:"#fff", position:"relative" },
   header:    { background:"#141414", borderBottom:"1px solid #1e1e1e", padding:"16px 20px", display:"flex", alignItems:"center", justifyContent:"space-between" },
   content:   { flex:1, padding:16, overflowY:"auto" },
-  bottomNav: { display:"flex", background:"#141414", borderTop:"1px solid #1e1e1e", padding:"6px 0" },
+  bottomNav: { display:"flex", background:"#141414", borderTop:"1px solid #1e1e1e", padding:"6px 0", paddingBottom:"calc(6px + env(safe-area-inset-bottom))" },
 
   logo:    { fontSize:24, fontWeight:800, color:"#fff", letterSpacing:4, marginBottom:4 },
   logoSub: { fontSize:10, color:"#444", letterSpacing:1.5, marginBottom:30 },
