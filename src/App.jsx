@@ -157,6 +157,17 @@ async function dbGetUserByEmail(email) {
     createdAt: data.created_at ? new Date(data.created_at).toLocaleDateString("en-NG", { day:"numeric", month:"short", year:"numeric" }) : null,
   };
 }
+// Get ALL profiles for an email (security can have one per estate)
+async function dbGetAllProfilesForEmail(email) {
+  const { data, error } = await supabase.from("users").select("*").eq("email", email);
+  if (error || !data) return [];
+  return data.map(d => ({
+    email: d.email, name: d.name,
+    estateId: d.estate_id, role: d.role,
+    unitName: d.unit_name || null,
+    createdAt: d.created_at ? new Date(d.created_at).toLocaleDateString("en-NG", { day:"numeric", month:"short", year:"numeric" }) : null,
+  }));
+}
 async function dbCreateUser(user) {
   const { error } = await supabase.from("users").insert({
     email: user.email, name: user.name,
@@ -165,6 +176,17 @@ async function dbCreateUser(user) {
   });
   if (error) { console.error("dbCreateUser:", error); return false; }
   return true;
+}
+async function dbGetUserProfile(email, estateId) {
+  const { data, error } = await supabase.from("users").select("*")
+    .eq("email", email).eq("estate_id", estateId).single();
+  if (error || !data) return null;
+  return {
+    email: data.email, name: data.name,
+    estateId: data.estate_id, role: data.role,
+    unitName: data.unit_name || null,
+    createdAt: data.created_at ? new Date(data.created_at).toLocaleDateString("en-NG", { day:"numeric", month:"short", year:"numeric" }) : null,
+  };
 }
 
 // Check if email is on the approved residents list and return their record
@@ -525,80 +547,97 @@ function AuthScreen({ onLogin, onLogoTap = () => {} }) {
   const goSignup = () => { setMode("signup"); setError(""); setSuccess(""); };
   const goForgot = () => { setMode("forgot"); setError(""); setSuccess(""); };
 
+  // If user has multiple estate profiles (security), show estate picker
+  const [profiles, setProfiles]     = useState(null); // null = not yet fetched
+  const [selProfile, setSelProfile] = useState(null);
+
   const handleLogin = async () => {
     setError("");
-    // Sign in via Supabase Auth
     const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
       email: form.email.trim().toLowerCase(),
       password: form.password,
     });
     if (authError || !authData.user) return setError("Invalid email or password.");
-    // Fetch the user profile from our users table
-    const profile = await dbGetUserByEmail(form.email.trim().toLowerCase());
-    if (!profile) return setError("Account not found. Please contact your estate admin.");
+
+    const allProfiles = await dbGetAllProfilesForEmail(form.email.trim().toLowerCase());
+    if (allProfiles.length === 0) return setError("Account not found. Please contact your estate admin.");
+
+    if (allProfiles.length === 1) {
+      // Single profile — log straight in
+      const estate = ESTATES.find((e) => e.id === allProfiles[0].estateId);
+      onLogin({ ...allProfiles[0], estateName: estate ? estate.name : "Estate" });
+    } else {
+      // Multiple profiles (security with multiple estates) — show picker
+      setProfiles(allProfiles);
+    }
+  };
+
+  const handleSelectProfile = (profile) => {
     const estate = ESTATES.find((e) => e.id === profile.estateId);
     onLogin({ ...profile, estateName: estate ? estate.name : "Estate" });
+    setProfiles(null);
   };
 
   const handleSignup = async () => {
     setError(""); setSuccess("");
-    const requiresAdminCode = role === "security";
 
-    // Basic validation
+    // Basic validation for all roles
     if (!form.firstName.trim() || !form.lastName.trim() || !form.email || !form.password)
-      return setError("Name, email and password are required.");
+      return setError("All name, email and password fields are required.");
     if (form.password !== form.confirm) return setError("Passwords do not match.");
     if (form.password.length < 6) return setError("Password must be at least 6 characters.");
 
-    // Security officers need estate + admin code + must be on the approved list
-    if (role === "security") {
-      if (!form.estateId) return setError("Please select your estate.");
-      if (!form.adminCode) return setError("Admin code is required to register as Security.");
-      // Verify admin code matches the estate's security_code in DB
-      const estateRec = ESTATES.find(e => e.id === form.estateId);
-      if (!estateRec || form.adminCode !== estateRec.code)
-        return setError("Invalid admin code. Contact your estate administrator.");
-      // Also check that this email is on the approved security list
-      const approvedSec = await dbCheckApprovedResident(form.email, form.estateId);
-      if (!approvedSec || approvedSec.unitName !== "__security__") {
-        return setError("Your email is not approved as a security officer for this estate. Contact your estate administrator.");
-      }
-    }
-
-    let resolvedEstateId = form.estateId;
+    let resolvedEstateId = null;
     let resolvedUnitName = null;
 
     if (role === "resident") {
-      // Residents: check approved_residents table — email IS the verification
-      // Try each estate until we find a match
+      // Check approved_residents — the approved entry determines their estate and unit
       let approved = null;
       for (const estate of ESTATES) {
-        approved = await dbCheckApprovedResident(form.email, estate.id);
-        if (approved) { resolvedEstateId = estate.id; break; }
+        const check = await dbCheckApprovedResident(form.email, estate.id);
+        if (check && check.unitName !== "__security__") {
+          approved = check;
+          resolvedEstateId = estate.id;
+          break;
+        }
       }
       if (!approved) {
-        return setError(
-          "Your email is not on the approved residents list. " +
-          "Please contact your estate manager to be added before signing up."
-        );
+        return setError("Your email is not on the approved residents list. Contact your estate manager to be added first.");
       }
       resolvedUnitName = approved.unitName;
+
+    } else if (role === "security") {
+      // Security: must select estate + enter admin code + be on approved security list
+      if (!form.estateId) return setError("Please select your estate.");
+      if (!form.adminCode) return setError("Admin code is required to register as Security.");
+      const estateRec = ESTATES.find(e => e.id === form.estateId);
+      if (!estateRec || form.adminCode !== estateRec.code)
+        return setError("Invalid admin code. Contact your estate administrator.");
+      const approvedSec = await dbCheckApprovedResident(form.email, form.estateId);
+      if (!approvedSec || approvedSec.unitName !== "__security__") {
+        return setError("Your email is not approved as a security officer for this estate. Contact your administrator.");
+      }
+      resolvedEstateId = form.estateId;
+      resolvedUnitName = null;
     }
 
     const estate = ESTATES.find((e) => e.id === resolvedEstateId);
     if (!estate) return setError("Could not determine your estate. Please contact support.");
 
-    // Create in Supabase Auth
-    const { data: authData, error: authError } = await supabase.auth.signUp({
+    // Check if a profile already exists for this email + estate combination
+    const existingProfile = await dbGetUserProfile(form.email.trim().toLowerCase(), resolvedEstateId);
+    if (existingProfile) return setError("An account already exists for this email and estate.");
+
+    // Create Supabase Auth account (only on first signup — subsequent estates share the same Auth account)
+    const { error: authError } = await supabase.auth.signUp({
       email: form.email.trim().toLowerCase(),
       password: form.password,
     });
-    if (authError) {
-      if (authError.message.includes("already registered")) return setError("Email already registered.");
+    if (authError && !authError.message.includes("already registered")) {
       return setError("Sign-up failed: " + authError.message);
     }
 
-    // Save profile in users table
+    // Save this estate profile
     const newUser = {
       email: form.email.trim().toLowerCase(),
       name: (form.firstName.trim() + " " + form.lastName.trim()),
@@ -612,13 +651,13 @@ function AuthScreen({ onLogin, onLogoTap = () => {} }) {
       return setError("Sign-up failed — could not save your profile. Please try again.");
     }
 
-    // Mark the approved_residents row as used so it can't be reused
+    // Mark the approved slot as used
     await dbMarkResidentUsed(form.email, resolvedEstateId);
 
     await supabase.auth.signOut();
     setSuccess(
-      "Account created! You are registered to " + estate.name +
-      (resolvedUnitName ? " — " + resolvedUnitName : "") +
+      "Account created! Registered to " + estate.name +
+      (resolvedUnitName ? " — " + resolvedUnitName : " as Security Officer") +
       ". You can now sign in."
     );
     setMode("login");
@@ -626,6 +665,39 @@ function AuthScreen({ onLogin, onLogoTap = () => {} }) {
   };
 
   if (mode === "forgot") return <ForgotPasswordScreen onBack={goLogin} />;
+
+  // Estate picker — shown when a security officer has multiple estate profiles
+  if (profiles) {
+    return (
+      <div style={c.page}>
+        <div style={c.authCard}>
+          <div style={{ ...c.logo, cursor:"default", userSelect:"none" }}>UPSIDIAN</div>
+          <div style={c.logoSub}>SMART ESTATE MANAGEMENT</div>
+          <div style={c.title}>Select Estate</div>
+          <div style={c.desc}>Your account is linked to multiple estates. Choose which one to log into.</div>
+          {profiles.map(p => {
+            const estate = ESTATES.find(e => e.id === p.estateId);
+            return (
+              <button
+                key={p.estateId}
+                onClick={() => handleSelectProfile(p)}
+                style={{ width:"100%", background:"#1a1a1a", border:"1px solid #2a2a2a", color:"#fff", borderRadius:12, padding:"14px 16px", marginBottom:10, cursor:"pointer", textAlign:"left", display:"block" }}
+              >
+                <div style={{ fontWeight:700, fontSize:14 }}>{estate ? estate.name : p.estateId}</div>
+                <div style={{ fontSize:11, color:"#555", marginTop:3 }}>
+                  {p.role === "security" ? "Security Officer" : "Resident" + (p.unitName ? " — " + p.unitName : "")}
+                </div>
+              </button>
+            );
+          })}
+          <button onClick={() => { setProfiles(null); supabase.auth.signOut(); }}
+            style={{ background:"none", border:"none", color:"#444", fontSize:12, cursor:"pointer", marginTop:8, width:"100%" }}>
+            &larr; Back to Sign In
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={c.page}>
@@ -1503,7 +1575,7 @@ function ProfileView({ user, onUserUpdate, onLogout }) {
 
         {[
           ["Estate",    estate ? estate.name : user.estateId],
-          ["Unit",      user.unitName || "—"],
+          ...(user.role === "resident" ? [["Unit", user.unitName || "—"]] : []),
           ["Role",      user.role === "security" ? "Security Officer" : "Resident"],
           ["Member since", user.createdAt || "—"],
         ].map(([k, v]) => (
