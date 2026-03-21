@@ -1171,6 +1171,22 @@ function ResidentApp({ user, onLogout, onUserUpdate }) {
         {!confirmDelete && (
           <div style={{ display:"flex", gap:8, marginTop:10 }}>
             <button
+              onClick={() => {
+                const estate = ESTATES.find(e => e.id === inv.estateId);
+                const msg = encodeURIComponent(
+                  "Hi " + inv.guestName + ", your access code for " +
+                  (estate ? estate.name : "the estate") + " is: *" + inv.code + "*" +
+                  "\n\nValid: " + fmtDate(inv.date) +
+                  " from " + inv.timeFrom + " – " + inv.timeTo + " WAT." +
+                  "\n\nShow this code to the gate officer on arrival."
+                );
+                window.open("https://wa.me/?text=" + msg, "_blank");
+              }}
+              style={{ flex:1, background:"#075E54", color:"#fff", border:"none", borderRadius:8, padding:"7px 0", fontSize:11, cursor:"pointer", fontWeight:600 }}
+            >
+              WhatsApp
+            </button>
+            <button
               onClick={() => hideInvite(inv.id)}
               style={{ flex:1, background:"#1a1a1a", border:"1px solid #2a2a2a", color:"#555", borderRadius:8, padding:"7px 0", fontSize:11, cursor:"pointer", letterSpacing:0.5 }}
             >
@@ -1516,9 +1532,27 @@ function ResidentApp({ user, onLogout, onUserUpdate }) {
             {/* Big code + copy */}
             <ModalCopyBox code={codeModal.code} />
 
+            {/* WhatsApp share */}
+            <button
+              onClick={() => {
+                const estate = ESTATES.find(e => e.id === user.estateId);
+                const msg = encodeURIComponent(
+                  "Hi " + codeModal.guestName + ", your access code for " +
+                  (estate ? estate.name : "the estate") + " is: *" + codeModal.code + "*" +
+                  "\n\nValid: " + fmtDate(codeModal.date) +
+                  " from " + codeModal.timeFrom + " – " + codeModal.timeTo + " WAT." +
+                  "\n\nShow this code to the gate officer on arrival."
+                );
+                window.open("https://wa.me/?text=" + msg, "_blank");
+              }}
+              style={{ width:"100%", background:"#075E54", color:"#fff", border:"none", borderRadius:10, padding:"13px 0", fontSize:14, fontWeight:700, cursor:"pointer", marginTop:10, display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}
+            >
+              <span style={{ fontSize:18 }}>&#x2B;</span> Send via WhatsApp
+            </button>
+
             <button
               onClick={() => setCodeModal(null)}
-              style={{ width:"100%", background:"#1a1a1a", border:"1px solid #2a2a2a", color:"#666", borderRadius:10, padding:"11px 0", fontSize:13, cursor:"pointer", marginTop:12 }}
+              style={{ width:"100%", background:"#1a1a1a", border:"1px solid #2a2a2a", color:"#666", borderRadius:10, padding:"11px 0", fontSize:13, cursor:"pointer", marginTop:8 }}
             >
               Done
             </button>
