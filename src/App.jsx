@@ -618,8 +618,9 @@ function AuthScreen({ onLogin, onLogoTap = () => {} }) {
   const [mode, setMode]   = useState("login");
   const [role, setRole]   = useState("resident");
   const [form, setForm]   = useState(() => {
-    const saved = localStorage.getItem("upsidian_saved_email") || "";
-    return { firstName:"", lastName:"", email:saved, password:"", confirm:"", estateId:"", estateCode:"", adminCode:"" };
+    const savedEmail = localStorage.getItem("upsidian_saved_email") || "";
+    const savedPw    = localStorage.getItem("upsidian_saved_pw") || "";
+    return { firstName:"", lastName:"", email:savedEmail, password:savedPw, confirm:"", estateId:"", estateCode:"", adminCode:"" };
   });
   const [rememberMe, setRememberMe] = useState(() => !!localStorage.getItem("upsidian_saved_email"));
   const [error, setError]     = useState("");
@@ -645,8 +646,10 @@ function AuthScreen({ onLogin, onLogoTap = () => {} }) {
     // Save email if remember me is checked
     if (rememberMe) {
       localStorage.setItem("upsidian_saved_email", form.email.trim().toLowerCase());
+      localStorage.setItem("upsidian_saved_pw", form.password);
     } else {
       localStorage.removeItem("upsidian_saved_email");
+      localStorage.removeItem("upsidian_saved_pw");
     }
 
     const allProfiles = await dbGetAllProfilesForEmail(form.email.trim().toLowerCase());
@@ -1800,7 +1803,7 @@ function StaffSection({ user }) {
             <div style={{ width:60, height:60, borderRadius:"50%", background:"#1a1a1a", border:"1px solid #2a2a2a", overflow:"hidden", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center" }}>
               {photoPreview
                 ? <img src={photoPreview} alt="preview" style={{ width:"100%", height:"100%", objectFit:"cover" }} />
-                : <span style={{ fontSize:22, color:"#333" }}>👤</span>
+                : <svg viewBox="0 0 24 24" width="28" height="28" fill="#333"><path d="M12 12c2.7 0 4.8-2.1 4.8-4.8S14.7 2.4 12 2.4 7.2 4.5 7.2 7.2 9.3 12 12 12zm0 2.4c-3.2 0-9.6 1.6-9.6 4.8v2.4h19.2v-2.4c0-3.2-6.4-4.8-9.6-4.8z"/></svg>
               }
             </div>
             <div>
@@ -1852,10 +1855,10 @@ function StaffSection({ user }) {
             <div key={s.id} style={{ background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:12, padding:14, marginBottom:10 }}>
               <div style={{ display:"flex", alignItems:"center", gap:12 }}>
                 {/* Photo */}
-                <div style={{ width:46, height:46, borderRadius:"50%", background:"#222", border:"1px solid #333", overflow:"hidden", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center" }}>
+                <div style={{ width:52, height:52, borderRadius:"50%", background:"#222", border:"1px solid #333", overflow:"hidden", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center" }}>
                   {s.photo_url
                     ? <img src={s.photo_url} alt={s.full_name} style={{ width:"100%", height:"100%", objectFit:"cover" }} />
-                    : <span style={{ fontSize:18, color:"#444" }}>👤</span>
+                    : <svg viewBox="0 0 24 24" width="26" height="26" fill="#444"><path d="M12 12c2.7 0 4.8-2.1 4.8-4.8S14.7 2.4 12 2.4 7.2 4.5 7.2 7.2 9.3 12 12 12zm0 2.4c-3.2 0-9.6 1.6-9.6 4.8v2.4h19.2v-2.4c0-3.2-6.4-4.8-9.6-4.8z"/></svg>
                   }
                 </div>
                 {/* Info */}
@@ -2279,7 +2282,7 @@ function SecurityAppWithProfile({ user, onLogout, onUserUpdate }) {
                         <div style={{ width:48, height:48, borderRadius:"50%", background:"#1a1a1a", border:"1px solid #2a2a2a", overflow:"hidden", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center" }}>
                           {gateResult.staff.photo_url
                             ? <img src={gateResult.staff.photo_url} alt={gateResult.staff.full_name} style={{ width:"100%", height:"100%", objectFit:"cover" }} />
-                            : <span style={{ fontSize:20 }}>👤</span>
+                            : <svg viewBox="0 0 24 24" width="26" height="26" fill="#444"><path d="M12 12c2.7 0 4.8-2.1 4.8-4.8S14.7 2.4 12 2.4 7.2 4.5 7.2 7.2 9.3 12 12 12zm0 2.4c-3.2 0-9.6 1.6-9.6 4.8v2.4h19.2v-2.4c0-3.2-6.4-4.8-9.6-4.8z"/></svg>
                           }
                         </div>
                         <div>
@@ -2305,7 +2308,7 @@ function SecurityAppWithProfile({ user, onLogout, onUserUpdate }) {
                         <div style={{ width:36, height:36, borderRadius:"50%", background:"#1a1a1a", overflow:"hidden", display:"flex", alignItems:"center", justifyContent:"center" }}>
                           {gateResult.staff.photo_url
                             ? <img src={gateResult.staff.photo_url} alt="" style={{ width:"100%", height:"100%", objectFit:"cover" }} />
-                            : <span style={{ fontSize:16 }}>👤</span>
+                            : <svg viewBox="0 0 24 24" width="20" height="20" fill="#555"><path d="M12 12c2.7 0 4.8-2.1 4.8-4.8S14.7 2.4 12 2.4 7.2 4.5 7.2 7.2 9.3 12 12 12zm0 2.4c-3.2 0-9.6 1.6-9.6 4.8v2.4h19.2v-2.4c0-3.2-6.4-4.8-9.6-4.8z"/></svg>
                           }
                         </div>
                         <div style={{ fontSize:13, color:"#e0e0e0" }}>{gateResult.staff.full_name}</div>
