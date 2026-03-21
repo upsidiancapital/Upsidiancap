@@ -260,6 +260,50 @@ async function dbDeleteInvite(inviteId) {
   return true;
 }
 
+// STAFF
+async function dbGetStaff(residentEmail) {
+  const { data, error } = await supabase.from("staff").select("*").eq("resident_email", residentEmail).order("created_at");
+  if (error) { console.error("dbGetStaff:", error); return []; }
+  return data || [];
+}
+async function dbAddStaff(staff) {
+  const { error } = await supabase.from("staff").insert({
+    resident_email: staff.residentEmail,
+    estate_id: staff.estateId,
+    full_name: staff.fullName,
+    phone: staff.phone,
+    photo_url: staff.photoUrl || null,
+    code: staff.code,
+    active: true,
+  });
+  if (error) { console.error("dbAddStaff:", error); return false; }
+  return true;
+}
+async function dbToggleStaff(id, active) {
+  const { error } = await supabase.from("staff").update({ active }).eq("id", id);
+  if (error) { console.error("dbToggleStaff:", error); return false; }
+  return true;
+}
+async function dbDeleteStaff(id) {
+  const { error } = await supabase.from("staff").delete().eq("id", id);
+  if (error) { console.error("dbDeleteStaff:", error); return false; }
+  return true;
+}
+async function dbGetStaffByCode(code, estateId) {
+  const { data, error } = await supabase.from("staff").select("*")
+    .eq("code", code.toUpperCase()).eq("estate_id", estateId).single();
+  if (error || !data) return null;
+  return data;
+}
+async function dbUploadStaffPhoto(file, staffCode) {
+  const ext = file.name.split(".").pop();
+  const path = staffCode + "." + ext;
+  const { error } = await supabase.storage.from("staff-photos").upload(path, file, { upsert: true });
+  if (error) { console.error("dbUploadStaffPhoto:", error); return null; }
+  const { data } = supabase.storage.from("staff-photos").getPublicUrl(path);
+  return data.publicUrl;
+}
+
 // MESSAGES
 async function dbSendMessage(userEmail, userName, estateId, message) {
   const { error } = await supabase.from("messages").insert({
@@ -1653,6 +1697,220 @@ function ResidentApp({ user, onLogout, onUserUpdate }) {
   );
 }
 
+
+// ─── Staff Section Component ──────────────────────────────────────────────────
+
+function StaffSection({ user }) {
+  const MAX_STAFF = 4;
+  const [staff, setStaff]         = useState([]);
+  const [open, setOpen]           = useState(false);
+  const [loading, setLoading]     = useState(true);
+  const [saving, setSaving]       = useState(false);
+  const [err, setErr]             = useState("");
+  const [form, setForm]           = useState({ fullName:"", phone:"" });
+  const [photoFile, setPhotoFile] = useState(null);
+  const [photoPreview, setPhotoPreview] = useState(null);
+
+  const loadStaff = async () => {
+    const data = await dbGetStaff(user.email);
+    setStaff(data);
+    setLoading(false);
+  };
+
+  useEffect(() => { loadStaff(); }, []);
+
+  const handlePhotoChange = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setPhotoFile(file);
+    const reader = new FileReader();
+    reader.onload = (ev) => setPhotoPreview(ev.target.result);
+    reader.readAsDataURL(file);
+  };
+
+  const handleAdd = async () => {
+    setErr("");
+    if (!form.fullName.trim()) return setErr("Full name is required.");
+    if (!form.phone.trim()) return setErr("Phone number is required.");
+    if (staff.length >= MAX_STAFF) return setErr("Maximum of 4 staff members allowed.");
+    setSaving(true);
+
+    // Generate unique permanent staff code: ST + 6 chars
+    const code = "ST" + Math.random().toString(36).substring(2, 8).toUpperCase();
+
+    // Upload photo if provided
+    let photoUrl = null;
+    if (photoFile) {
+      photoUrl = await dbUploadStaffPhoto(photoFile, code);
+    }
+
+    const newStaff = {
+      residentEmail: user.email,
+      estateId: user.estateId,
+      fullName: form.fullName.trim(),
+      phone: form.phone.trim(),
+      photoUrl,
+      code,
+    };
+
+    const ok = await dbAddStaff(newStaff);
+    if (!ok) { setSaving(false); return setErr("Failed to add staff. Please try again."); }
+
+    await loadStaff();
+    setForm({ fullName:"", phone:"" });
+    setPhotoFile(null);
+    setPhotoPreview(null);
+    setOpen(false);
+    setSaving(false);
+  };
+
+  const handleToggle = async (id, current) => {
+    await dbToggleStaff(id, !current);
+    setStaff(prev => prev.map(s => s.id === id ? { ...s, active: !current } : s));
+  };
+
+  const handleDelete = async (id) => {
+    await dbDeleteStaff(id);
+    setStaff(prev => prev.filter(s => s.id !== id));
+  };
+
+  return (
+    <div style={{ background:"#141414", border:"1px solid #1e1e1e", borderRadius:14, padding:20, marginBottom:16 }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+        <div style={{ fontSize:11, fontWeight:700, color:"#888", letterSpacing:2, textTransform:"uppercase" }}>
+          My Staff ({staff.length}/{MAX_STAFF})
+        </div>
+        {staff.length < MAX_STAFF && (
+          <button
+            onClick={() => { setOpen(v => !v); setErr(""); setForm({ fullName:"", phone:"" }); setPhotoFile(null); setPhotoPreview(null); }}
+            style={{ background:"none", border:"1px solid #2a2a2a", color:"#555", borderRadius:6, padding:"4px 10px", fontSize:11, cursor:"pointer" }}
+          >
+            {open ? "Cancel" : "+ Add Staff"}
+          </button>
+        )}
+      </div>
+
+      {/* Add form */}
+      {open && (
+        <div style={{ marginTop:16 }}>
+          {err && <div style={{ background:"#1e0a0a", border:"1px solid #3d1515", borderRadius:8, padding:"10px 14px", color:"#ff6b6b", fontSize:12, marginBottom:12 }}>{err}</div>}
+
+          {/* Photo upload */}
+          <div style={{ display:"flex", alignItems:"center", gap:14, marginBottom:14 }}>
+            <div style={{ width:60, height:60, borderRadius:"50%", background:"#1a1a1a", border:"1px solid #2a2a2a", overflow:"hidden", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center" }}>
+              {photoPreview
+                ? <img src={photoPreview} alt="preview" style={{ width:"100%", height:"100%", objectFit:"cover" }} />
+                : <span style={{ fontSize:22, color:"#333" }}>👤</span>
+              }
+            </div>
+            <div>
+              <label style={{ fontSize:10, fontWeight:600, color:"#888", letterSpacing:1.5, textTransform:"uppercase", display:"block", marginBottom:6 }}>Photo (optional)</label>
+              <label style={{ background:"#1a1a1a", border:"1px solid #2a2a2a", color:"#888", borderRadius:6, padding:"5px 12px", fontSize:11, cursor:"pointer" }}>
+                Choose Photo
+                <input type="file" accept="image/*" onChange={handlePhotoChange} style={{ display:"none" }} />
+              </label>
+            </div>
+          </div>
+
+          <label style={{ fontSize:10, fontWeight:600, color:"#888", letterSpacing:1.5, textTransform:"uppercase", display:"block", marginBottom:6 }}>Full Name</label>
+          <input
+            style={{ width:"100%", padding:"12px 14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontSize:16, color:"#fff", boxSizing:"border-box", outline:"none", marginBottom:12 }}
+            placeholder="e.g. Amaka Johnson"
+            value={form.fullName}
+            onChange={e => setForm(p => ({ ...p, fullName: e.target.value }))}
+          />
+
+          <label style={{ fontSize:10, fontWeight:600, color:"#888", letterSpacing:1.5, textTransform:"uppercase", display:"block", marginBottom:6 }}>Phone Number</label>
+          <input
+            style={{ width:"100%", padding:"12px 14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontSize:16, color:"#fff", boxSizing:"border-box", outline:"none", marginBottom:16 }}
+            placeholder="e.g. 08012345678"
+            type="tel"
+            value={form.phone}
+            onChange={e => setForm(p => ({ ...p, phone: e.target.value }))}
+          />
+
+          <button
+            style={{ width:"100%", background:"#fff", color:"#000", border:"none", padding:14, borderRadius:10, fontSize:14, fontWeight:700, cursor:"pointer" }}
+            onClick={handleAdd}
+            disabled={saving}
+          >
+            {saving ? "Adding..." : "Add Staff Member"}
+          </button>
+        </div>
+      )}
+
+      {/* Staff list */}
+      {loading ? (
+        <div style={{ color:"#333", fontSize:13, marginTop:12 }}>Loading...</div>
+      ) : staff.length === 0 && !open ? (
+        <div style={{ fontSize:12, color:"#555", marginTop:10, lineHeight:1.6 }}>
+          Add domestic staff (cleaner, driver, nanny, etc.) so they can access the estate with a permanent code. You can turn their access on or off at any time.
+        </div>
+      ) : (
+        <div style={{ marginTop: open ? 16 : 12 }}>
+          {staff.map(s => (
+            <div key={s.id} style={{ background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:12, padding:14, marginBottom:10 }}>
+              <div style={{ display:"flex", alignItems:"center", gap:12 }}>
+                {/* Photo */}
+                <div style={{ width:46, height:46, borderRadius:"50%", background:"#222", border:"1px solid #333", overflow:"hidden", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center" }}>
+                  {s.photo_url
+                    ? <img src={s.photo_url} alt={s.full_name} style={{ width:"100%", height:"100%", objectFit:"cover" }} />
+                    : <span style={{ fontSize:18, color:"#444" }}>👤</span>
+                  }
+                </div>
+                {/* Info */}
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ fontWeight:700, fontSize:14, color: s.active ? "#fff" : "#555" }}>{s.full_name}</div>
+                  <div style={{ fontSize:11, color:"#444", marginTop:1 }}>{s.phone}</div>
+                </div>
+                {/* Toggle */}
+                <button
+                  onClick={() => handleToggle(s.id, s.active)}
+                  style={{
+                    background: s.active ? "#0a1e0a" : "#1a1a1a",
+                    border: s.active ? "1px solid #1a3d1a" : "1px solid #2a2a2a",
+                    color: s.active ? "#6bff6b" : "#555",
+                    borderRadius:20, padding:"4px 12px", fontSize:11, cursor:"pointer", fontWeight:600, whiteSpace:"nowrap",
+                  }}
+                >
+                  {s.active ? "Active" : "Disabled"}
+                </button>
+              </div>
+              {/* Code */}
+              <div style={{ background:"#0a0a0a", border:"1px solid #1e1e1e", borderRadius:8, padding:"8px 12px", marginTop:10, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                <div>
+                  <div style={{ fontSize:9, color:"#333", letterSpacing:1.5, textTransform:"uppercase", marginBottom:2 }}>Permanent Code</div>
+                  <div style={{ fontSize:18, fontWeight:800, letterSpacing:4, color: s.active ? "#fff" : "#444" }}>{s.code}</div>
+                </div>
+                <div style={{ display:"flex", gap:8 }}>
+                  <button
+                    onClick={() => {
+                      const msg = encodeURIComponent(
+                        "Hi " + s.full_name + ", your permanent access code for the estate is: *" + s.code + "*" +
+                        "\n\nUse this code at the gate whenever you arrive. Your employer controls when this code is active."
+                      );
+                      window.open("https://wa.me/?text=" + msg, "_blank");
+                    }}
+                    style={{ background:"#075E54", color:"#fff", border:"none", borderRadius:6, padding:"4px 10px", fontSize:10, cursor:"pointer", fontWeight:600 }}
+                  >
+                    Share
+                  </button>
+                  <button
+                    onClick={() => handleDelete(s.id)}
+                    style={{ background:"#1a0a0a", border:"1px solid #3d1515", color:"#ff6b6b", borderRadius:6, padding:"4px 10px", fontSize:10, cursor:"pointer" }}
+                  >
+                    Remove
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Profile View (shared by resident + security) ────────────────────────────
 
 function ProfileView({ user, onUserUpdate, onLogout }) {
@@ -1758,6 +2016,11 @@ function ProfileView({ user, onUserUpdate, onLogout }) {
           </div>
         )}
       </div>
+
+      {/* My Staff — residents only */}
+      {user.role === "resident" && (
+        <StaffSection user={user} />
+      )}
 
       {/* Contact Admin */}
       <div style={{ background:"#141414", border:"1px solid #1e1e1e", borderRadius:14, padding:20, marginBottom:16 }}>
@@ -1871,7 +2134,34 @@ function SecurityAppWithProfile({ user, onLogout, onUserUpdate }) {
     if (!gateCode.trim()) return;
     setLoading(true);
     setGateResult(null);
-    const code       = gateCode.toUpperCase().trim();
+    const code = gateCode.toUpperCase().trim();
+
+    // ── Check staff codes first (prefix ST) ──────────────────────────────────
+    if (code.startsWith("ST")) {
+      const staffMember = await dbGetStaffByCode(code, user.estateId);
+      if (!staffMember) {
+        setGateResult({ type:"invalid" });
+      } else if (!staffMember.active) {
+        setGateResult({ type:"staffDisabled", staff: staffMember });
+      } else {
+        // Log the staff entry
+        const entry = {
+          id: Date.now(), guest: staffMember.full_name + " (Staff)",
+          resident: "Resident Staff Access", unit: "—",
+          code: staffMember.code, estateId: user.estateId,
+          time: new Date().toLocaleTimeString("en-NG", { timeZone:"Africa/Lagos" }),
+          action: "Staff Entry",
+        };
+        await dbAddLogEntry(entry);
+        setAccessLog(prev => [entry, ...prev]);
+        setGateResult({ type:"staffGranted", staff: staffMember });
+      }
+      setGateCode("");
+      setLoading(false);
+      return;
+    }
+
+    // ── Regular invite code ───────────────────────────────────────────────────
     const allInvites = await dbGetInvites(user.estateId);
     const found      = allInvites.find((i) => i.code === code);
 
@@ -1980,6 +2270,47 @@ function SecurityAppWithProfile({ user, onLogout, onUserUpdate }) {
                     <div style={c.denied}>
                       <div style={{ color:"#ff6b6b", fontWeight:700, fontSize:15, marginBottom:6 }}>✗ Invalid Code</div>
                       <div style={{ fontSize:13, color:"#773333" }}>No matching invite found for this estate.</div>
+                    </div>
+                  )}
+                  {gateResult.type === "staffGranted" && (
+                    <div style={c.granted}>
+                      <div style={{ color:"#6bff6b", fontWeight:700, fontSize:15, marginBottom:12 }}>✓ Staff Access Granted</div>
+                      <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:10 }}>
+                        <div style={{ width:48, height:48, borderRadius:"50%", background:"#1a1a1a", border:"1px solid #2a2a2a", overflow:"hidden", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center" }}>
+                          {gateResult.staff.photo_url
+                            ? <img src={gateResult.staff.photo_url} alt={gateResult.staff.full_name} style={{ width:"100%", height:"100%", objectFit:"cover" }} />
+                            : <span style={{ fontSize:20 }}>👤</span>
+                          }
+                        </div>
+                        <div>
+                          <div style={{ fontWeight:700, fontSize:14, color:"#fff" }}>{gateResult.staff.full_name}</div>
+                          <div style={{ fontSize:11, color:"#555", marginTop:2 }}>{gateResult.staff.phone}</div>
+                        </div>
+                      </div>
+                      {[
+                        ["Type",   "Registered Staff"],
+                        ["Code",   gateResult.staff.code],
+                        ["Access", "Permanent — Active"],
+                      ].map(([k, v]) => (
+                        <div key={k} style={{ fontSize:13, color:"#888", marginBottom:4 }}>
+                          <span style={{ color:"#333", display:"inline-block", minWidth:64 }}>{k}</span>{v}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {gateResult.type === "staffDisabled" && (
+                    <div style={c.denied}>
+                      <div style={{ color:"#ff6b6b", fontWeight:700, fontSize:15, marginBottom:8 }}>✗ Staff Access Disabled</div>
+                      <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:8 }}>
+                        <div style={{ width:36, height:36, borderRadius:"50%", background:"#1a1a1a", overflow:"hidden", display:"flex", alignItems:"center", justifyContent:"center" }}>
+                          {gateResult.staff.photo_url
+                            ? <img src={gateResult.staff.photo_url} alt="" style={{ width:"100%", height:"100%", objectFit:"cover" }} />
+                            : <span style={{ fontSize:16 }}>👤</span>
+                          }
+                        </div>
+                        <div style={{ fontSize:13, color:"#e0e0e0" }}>{gateResult.staff.full_name}</div>
+                      </div>
+                      <div style={{ fontSize:13, color:"#773333" }}>The resident has temporarily disabled this staff member's access. They must re-enable it before entry is permitted.</div>
                     </div>
                   )}
                 </>
