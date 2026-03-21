@@ -308,7 +308,7 @@ const c = {
   bottomNav: { display:"flex", background:"#141414", borderTop:"1px solid #1e1e1e", padding:"6px 0", paddingBottom:"calc(6px + env(safe-area-inset-bottom))" },
 
   logo:    { fontSize:24, fontWeight:800, color:"#fff", letterSpacing:4, marginBottom:4 },
-  logoSub: { fontSize:10, color:"#444", letterSpacing:1.5, marginBottom:30 },
+  logoSub: { fontSize:10, color:"#888", letterSpacing:1.5, marginBottom:30 },
   title:   { fontSize:20, fontWeight:700, color:"#fff", marginBottom:5 },
   desc:    { fontSize:13, color:"#555", marginBottom:24 },
   label:   { fontSize:10, fontWeight:600, color:"#666", letterSpacing:1.5, display:"block", marginBottom:7, textTransform:"uppercase" },
@@ -346,7 +346,7 @@ const c = {
   statCard:   { background:"#141414", border:"1px solid #1e1e1e", borderRadius:12, padding:16 },
   codeBox:    { background:"#0a0a0a", border:"1px solid #1e1e1e", borderRadius:10, padding:"10px 14px", textAlign:"center", marginTop:10 },
   headerLogo: { fontWeight:800, fontSize:18, letterSpacing:4, color:"#fff" },
-  headerSub:  { fontSize:9, color:"#333", letterSpacing:1.5, textTransform:"uppercase", marginTop:2 },
+  headerSub:  { fontSize:9, color:"#888", letterSpacing:1.5, textTransform:"uppercase", marginTop:2 },
 
   roleRow: { display:"flex", gap:8, marginBottom:16 },
   roleBtn: (active) => ({
@@ -400,7 +400,7 @@ function ForgotPasswordScreen({ onBack }) {
       <div style={c.page}>
         <div style={c.authCard}>
           <div style={c.logo}>UPSIDIAN</div>
-          <div style={c.logoSub}>SMART ESTATE MANAGEMENT</div>
+          <div style={c.logoSub}>SMART ESTATE MANAGEMENT AT YOUR FINGERTIPS</div>
           <div style={{ width:48, height:48, borderRadius:"50%", background:"#0a1e0a", border:"1px solid #1a3d1a", display:"flex", alignItems:"center", justifyContent:"center", fontSize:22, marginBottom:16 }}>
             &#10003;
           </div>
@@ -419,7 +419,7 @@ function ForgotPasswordScreen({ onBack }) {
       <div style={c.authCard}>
         <button style={c.btnBack} onClick={onBack}>&larr; Back to Sign In</button>
         <div style={c.logo}>UPSIDIAN</div>
-        <div style={c.logoSub}>SMART ESTATE MANAGEMENT</div>
+        <div style={c.logoSub}>SMART ESTATE MANAGEMENT AT YOUR FINGERTIPS</div>
         <div style={c.title}>Reset password</div>
         <div style={c.desc}>Enter your registered email and we will send you a reset link.</div>
 
@@ -483,7 +483,7 @@ function ResetPasswordScreen({ onDone }) {
       <div style={c.page}>
         <div style={c.authCard}>
           <div style={c.logo}>UPSIDIAN</div>
-          <div style={c.logoSub}>SMART ESTATE MANAGEMENT</div>
+          <div style={c.logoSub}>SMART ESTATE MANAGEMENT AT YOUR FINGERTIPS</div>
           <div style={{ width:48, height:48, borderRadius:"50%", background:"#0a1e0a", border:"1px solid #1a3d1a", display:"flex", alignItems:"center", justifyContent:"center", fontSize:22, marginBottom:16 }}>&#10003;</div>
           <div style={c.title}>Password updated</div>
           <div style={{ fontSize:13, color:"#555", marginBottom:24 }}>Your password has been reset. You can now sign in with your new password.</div>
@@ -497,7 +497,7 @@ function ResetPasswordScreen({ onDone }) {
     <div style={c.page}>
       <div style={c.authCard}>
         <div style={c.logo}>UPSIDIAN</div>
-        <div style={c.logoSub}>SMART ESTATE MANAGEMENT</div>
+        <div style={c.logoSub}>SMART ESTATE MANAGEMENT AT YOUR FINGERTIPS</div>
         <div style={c.title}>Choose new password</div>
         <div style={c.desc}>Enter and confirm your new password below.</div>
 
@@ -547,7 +547,11 @@ function PwInput({ placeholder, value, onChange, onKeyDown, style }) {
 function AuthScreen({ onLogin, onLogoTap = () => {} }) {
   const [mode, setMode]   = useState("login");
   const [role, setRole]   = useState("resident");
-  const [form, setForm]   = useState({ firstName:"", lastName:"", email:"", password:"", confirm:"", estateId:"", estateCode:"", adminCode:"" });
+  const [form, setForm]   = useState(() => {
+    const saved = localStorage.getItem("upsidian_saved_email") || "";
+    return { firstName:"", lastName:"", email:saved, password:"", confirm:"", estateId:"", estateCode:"", adminCode:"" };
+  });
+  const [rememberMe, setRememberMe] = useState(() => !!localStorage.getItem("upsidian_saved_email"));
   const [error, setError]     = useState("");
   const [success, setSuccess] = useState("");
 
@@ -567,6 +571,13 @@ function AuthScreen({ onLogin, onLogoTap = () => {} }) {
       password: form.password,
     });
     if (authError || !authData.user) return setError("Invalid email or password.");
+
+    // Save email if remember me is checked
+    if (rememberMe) {
+      localStorage.setItem("upsidian_saved_email", form.email.trim().toLowerCase());
+    } else {
+      localStorage.removeItem("upsidian_saved_email");
+    }
 
     const allProfiles = await dbGetAllProfilesForEmail(form.email.trim().toLowerCase());
     if (allProfiles.length === 0) return setError("Account not found. Please contact your estate admin.");
@@ -681,7 +692,7 @@ function AuthScreen({ onLogin, onLogoTap = () => {} }) {
       <div style={c.page}>
         <div style={c.authCard}>
           <div style={{ ...c.logo, cursor:"default", userSelect:"none" }}>UPSIDIAN</div>
-          <div style={c.logoSub}>SMART ESTATE MANAGEMENT</div>
+          <div style={c.logoSub}>SMART ESTATE MANAGEMENT AT YOUR FINGERTIPS</div>
           <div style={c.title}>Select Estate</div>
           <div style={c.desc}>Your account is linked to multiple estates. Choose which one to log into.</div>
           {profiles.map(p => {
@@ -715,7 +726,7 @@ function AuthScreen({ onLogin, onLogoTap = () => {} }) {
           <button style={c.btnBack} onClick={goLogin}>&larr; Back to Sign In</button>
         )}
         <div style={{ ...c.logo, cursor:"default", userSelect:"none" }} onClick={onLogoTap}>UPSIDIAN</div>
-        <div style={c.logoSub}>SMART ESTATE MANAGEMENT</div>
+        <div style={c.logoSub}>SMART ESTATE MANAGEMENT AT YOUR FINGERTIPS</div>
         <div style={c.title}>{mode === "login" ? "Welcome back" : "Create account"}</div>
         <div style={c.desc}>{mode === "login" ? "Sign in to your estate portal." : "Join your estate community."}</div>
 
@@ -781,9 +792,18 @@ function AuthScreen({ onLogin, onLogoTap = () => {} }) {
         </button>
 
         {mode === "login" && (
-          <div style={{ marginTop:14, textAlign:"center" }}>
+          <div style={{ marginTop:12, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+            <label style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer" }}>
+              <input
+                type="checkbox"
+                checked={rememberMe}
+                onChange={e => setRememberMe(e.target.checked)}
+                style={{ width:16, height:16, accentColor:"#fff", cursor:"pointer" }}
+              />
+              <span style={{ fontSize:12, color:"#555", letterSpacing:0.3 }}>Remember me</span>
+            </label>
             <button
-              style={{ background:"none", border:"none", color:"#444", fontSize:12, cursor:"pointer", letterSpacing:0.5 }}
+              style={{ background:"none", border:"none", color:"#555", fontSize:12, cursor:"pointer", letterSpacing:0.3 }}
               onClick={goForgot}
             >
               Forgot password?
@@ -1560,40 +1580,46 @@ function ResidentApp({ user, onLogout, onUserUpdate }) {
         </div>
       )}
 
-      {/* Bottom nav — Invite is the prominent centre button */}
-      <div style={{ display:"flex", background:"#141414", borderTop:"1px solid #1e1e1e", padding:"6px 0", alignItems:"flex-end", position:"relative" }}>
+      {/* Bottom nav */}
+      <div style={{ display:"flex", background:"#141414", borderTop:"1px solid #1e1e1e", padding:"6px 0", alignItems:"flex-end", position:"relative", paddingBottom:"calc(6px + env(safe-area-inset-bottom))" }}>
         {/* Home */}
-        <button onClick={() => setView("dashboard")} style={c.navBtn(view === "dashboard")} >
-          <span style={{ fontSize:18 }}>⌂</span>
+        <button onClick={() => setView("dashboard")} style={c.navBtn(view === "dashboard")}>
+          <svg width="22" height="22" viewBox="0 0 24 24" fill={view === "dashboard" ? "#fff" : "#555"}>
+            <path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/>
+          </svg>
           Home
         </button>
 
-        {/* Invite — raised centre FAB-style */}
+        {/* Invite — raised centre FAB */}
         <div style={{ flex:1, display:"flex", justifyContent:"center", alignItems:"center", position:"relative" }}>
           <button
             onClick={() => setView("invite")}
             style={{
               position:"relative",
               bottom:18,
-              width:58, height:58,
+              width:62, height:62,
               borderRadius:"50%",
-              background: view === "invite" ? "#fff" : "#e8e8e8",
-              border: view === "invite" ? "3px solid #fff" : "3px solid #2a2a2a",
-              boxShadow: "0 4px 20px rgba(0,0,0,0.6)",
+              background: view === "invite" ? "#fff" : "#222",
+              border: view === "invite" ? "3px solid #fff" : "3px solid #444",
+              boxShadow: "0 4px 24px rgba(0,0,0,0.8)",
               cursor:"pointer",
               display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center",
-              gap:1,
+              gap:2,
               transition:"all 0.15s",
             }}
           >
-            <span style={{ fontSize:22, color: view === "invite" ? "#000" : "#333" }}>✉</span>
-            <span style={{ fontSize:9, fontWeight:700, letterSpacing:0.5, color: view === "invite" ? "#000" : "#555" }}>INVITE</span>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill={view === "invite" ? "#000" : "#fff"}>
+              <path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z"/>
+            </svg>
+            <span style={{ fontSize:9, fontWeight:800, letterSpacing:0.8, color: view === "invite" ? "#000" : "#ccc" }}>INVITE</span>
           </button>
         </div>
 
         {/* Profile */}
         <button onClick={() => setView("profile")} style={c.navBtn(view === "profile")}>
-          <span style={{ fontSize:18 }}>◯</span>
+          <svg width="22" height="22" viewBox="0 0 24 24" fill={view === "profile" ? "#fff" : "#555"}>
+            <path d="M12 12c2.7 0 4.8-2.1 4.8-4.8S14.7 2.4 12 2.4 7.2 4.5 7.2 7.2 9.3 12 12 12zm0 2.4c-3.2 0-9.6 1.6-9.6 4.8v2.4h19.2v-2.4c0-3.2-6.4-4.8-9.6-4.8z"/>
+          </svg>
           Profile
         </button>
       </div>
@@ -1607,6 +1633,7 @@ function ProfileView({ user, onUserUpdate, onLogout }) {
   const [pwForm, setPwForm] = useState({ current:"", newPw:"", confirm:"" });
   const [pwErr, setPwErr]   = useState("");
   const [pwOk,  setPwOk]    = useState("");
+  const [pwOpen, setPwOpen] = useState(false);
 
   const setPw = (k) => (e) => setPwForm((p) => ({ ...p, [k]: e.target.value }));
 
@@ -1673,22 +1700,33 @@ function ProfileView({ user, onUserUpdate, onLogout }) {
         ))}
       </div>
 
-      {/* Change password */}
+      {/* Change password — hidden behind toggle */}
       <div style={{ background:"#141414", border:"1px solid #1e1e1e", borderRadius:14, padding:20, marginBottom:16 }}>
-        <div style={c.section}>Change Password</div>
-
-        {pwErr && <div style={c.err}>{pwErr}</div>}
-        {pwOk  && <div style={c.ok}>{pwOk}</div>}
-
-        <label style={c.label}>Current Password</label>
-        <PwInput placeholder="Your current password" value={pwForm.current} onChange={setPw("current")} style={c.appInput} />
-        <label style={c.label}>New Password</label>
-        <PwInput placeholder="At least 6 characters" value={pwForm.newPw} onChange={setPw("newPw")} style={c.appInput} />
-        <label style={c.label}>Confirm New Password</label>
-        <PwInput placeholder="Repeat new password" value={pwForm.confirm} onChange={setPw("confirm")} style={{ ...c.appInput, marginBottom:0 }} />
-        <div style={{ marginTop:14 }}>
-          <button style={c.btnApp} onClick={handleChangePassword}>Update Password</button>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+          <div style={c.section}>Password</div>
+          <button
+            onClick={() => { setPwOpen(v => !v); setPwErr(""); setPwOk(""); setPwForm({ current:"", newPw:"", confirm:"" }); }}
+            style={{ background:"none", border:"1px solid #2a2a2a", color:"#555", borderRadius:6, padding:"4px 10px", fontSize:11, cursor:"pointer" }}
+          >
+            {pwOpen ? "Cancel" : "Change Password"}
+          </button>
         </div>
+
+        {pwOpen && (
+          <div style={{ marginTop:16 }}>
+            {pwErr && <div style={c.err}>{pwErr}</div>}
+            {pwOk  && <div style={c.ok}>{pwOk}</div>}
+            <label style={c.label}>Current Password</label>
+            <PwInput placeholder="Your current password" value={pwForm.current} onChange={setPw("current")} style={c.appInput} />
+            <label style={c.label}>New Password</label>
+            <PwInput placeholder="At least 6 characters" value={pwForm.newPw} onChange={setPw("newPw")} style={c.appInput} />
+            <label style={c.label}>Confirm New Password</label>
+            <PwInput placeholder="Repeat new password" value={pwForm.confirm} onChange={setPw("confirm")} style={{ ...c.appInput, marginBottom:0 }} />
+            <div style={{ marginTop:14 }}>
+              <button style={c.btnApp} onClick={handleChangePassword}>Update Password</button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Logout */}
