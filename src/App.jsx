@@ -981,6 +981,7 @@ function ResidentApp({ user, onLogout, onUserUpdate }) {
   });
   const [inviteErr, setInviteErr]       = useState("");
   const [codeModal, setCodeModal] = useState(null); // popup for newly created invite
+  const [codesVisible, setCodesVisible] = useState(true); // toggle all codes on dashboard
 
   const loadInvites = useCallback(async () => {
     const data = await dbGetInvites(user.estateId);
@@ -1162,8 +1163,14 @@ function ResidentApp({ user, onLogout, onUserUpdate }) {
         </div>
         <div style={{ ...c.codeBox, position:"relative" }}>
           <div style={{ fontSize:10, color:"#333", letterSpacing:1.5, textTransform:"uppercase", marginBottom:4 }}>Access Code</div>
-          <div style={{ fontSize:24, fontWeight:800, letterSpacing:6, color:"#fff" }}>{inv.code}</div>
-          <CopyButton text={inv.code} />
+          {codesVisible ? (
+            <>
+              <div style={{ fontSize:24, fontWeight:800, letterSpacing:6, color:"#fff" }}>{inv.code}</div>
+              <CopyButton text={inv.code} />
+            </>
+          ) : (
+            <div style={{ fontSize:14, color:"#333", letterSpacing:2 }}>••••••</div>
+          )}
         </div>
 
         {/* Normal action row */}
@@ -1248,7 +1255,17 @@ function ResidentApp({ user, onLogout, onUserUpdate }) {
             </div>
 
             <div style={{ marginTop:20 }}>
-              <div style={c.section}>Your Recent Invites</div>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
+                <div style={c.section} style={{ marginBottom:0 }}>Your Recent Invites</div>
+                {myInvites.length > 0 && (
+                  <button
+                    onClick={() => setCodesVisible(v => !v)}
+                    style={{ background:"none", border:"1px solid #2a2a2a", color:"#555", borderRadius:6, padding:"4px 10px", fontSize:11, cursor:"pointer", letterSpacing:0.5 }}
+                  >
+                    {codesVisible ? "Hide Codes" : "Show Codes"}
+                  </button>
+                )}
+              </div>
               {loadingInvites ? (
                 <div style={{ color:"#2a2a2a", fontSize:13 }}>Loading...</div>
               ) : myInvites.length === 0 ? (
@@ -1651,8 +1668,9 @@ function SecurityAppWithProfile({ user, onLogout, onUserUpdate }) {
   const [gateResult, setGateResult] = useState(null);
   const [accessLog, setAccessLog]   = useState([]);
   const [loading, setLoading]       = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
+  const [refreshing, setRefreshing]   = useState(false);
   const [nigeriaTime, setNigeriaTime] = useState("");
+  const [logVisible, setLogVisible]   = useState(true); // toggle all accepted codes
 
   useEffect(() => {
     const tick = () => {
@@ -1820,10 +1838,18 @@ function SecurityAppWithProfile({ user, onLogout, onUserUpdate }) {
 
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
               <div style={c.section}>Access Log</div>
-              <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+              <div style={{ display:"flex", alignItems:"center", gap:8 }}>
                 {hiddenLogIds.length > 0 && (
                   <button onClick={unhideAllLogs} style={{ background:"none", border:"none", color:"#555", fontSize:11, cursor:"pointer", textDecoration:"underline", letterSpacing:0.5 }}>
                     Show {hiddenLogIds.length} hidden
+                  </button>
+                )}
+                {accessLog.length > 0 && (
+                  <button
+                    onClick={() => setLogVisible(v => !v)}
+                    style={{ background:"none", border:"1px solid #2a2a2a", color:"#555", borderRadius:6, padding:"4px 10px", fontSize:11, cursor:"pointer", letterSpacing:0.5 }}
+                  >
+                    {logVisible ? "Hide" : "Show"}
                   </button>
                 )}
                 <button
@@ -1834,7 +1860,11 @@ function SecurityAppWithProfile({ user, onLogout, onUserUpdate }) {
                 </button>
               </div>
             </div>
-            {accessLog.filter((l) => !hiddenLogIds.includes(l.id)).length === 0 ? (
+            {!logVisible ? (
+              <div style={{ color:"#333", fontSize:13, padding:"10px 0", textAlign:"center" }}>
+                Log hidden — tap Show to reveal
+              </div>
+            ) : accessLog.filter((l) => !hiddenLogIds.includes(l.id)).length === 0 ? (
               <div style={{ color:"#2a2a2a", fontSize:13, padding:"12px 0" }}>
                 No check-ins to show.{" "}
                 {hiddenLogIds.length > 0 && (
