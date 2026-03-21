@@ -302,9 +302,9 @@ async function dbDeleteResetToken(token) {
 const c = {
   page:      { fontFamily:"'DM Sans','Helvetica Neue',sans-serif", minHeight:"100dvh", background:"#0a0a0a", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"24px" },
   authCard:  { background:"#141414", border:"1px solid #2a2a2a", borderRadius:20, padding:"40px 32px", width:"100%", maxWidth:390 },
-  appWrap:   { fontFamily:"'DM Sans','Helvetica Neue',sans-serif", maxWidth:430, margin:"0 auto", minHeight:"100dvh", background:"#0f0f0f", display:"flex", flexDirection:"column", color:"#fff", position:"relative" },
+  appWrap:   { fontFamily:"'DM Sans','Helvetica Neue',sans-serif", maxWidth:430, margin:"0 auto", height:"100dvh", maxHeight:"100dvh", background:"#0f0f0f", display:"flex", flexDirection:"column", color:"#fff", position:"relative", overflow:"hidden" },
   header:    { background:"#141414", borderBottom:"1px solid #1e1e1e", padding:"16px 20px", display:"flex", alignItems:"center", justifyContent:"space-between" },
-  content:   { flex:1, padding:16, overflowY:"auto" },
+  content:   { flex:1, padding:16, overflowY:"auto", WebkitOverflowScrolling:"touch" },
   bottomNav: { display:"flex", background:"#141414", borderTop:"1px solid #1e1e1e", padding:"6px 0", paddingBottom:"calc(6px + env(safe-area-inset-bottom))" },
 
   logo:    { fontSize:24, fontWeight:800, color:"#fff", letterSpacing:4, marginBottom:4 },
@@ -1264,7 +1264,17 @@ function ResidentApp({ user, onLogout, onUserUpdate }) {
                   </button>
                 </div>
               ) : (
-                myInvites.filter((i) => !hiddenIds.includes(i.id)).slice(0, 3).map((inv) => <InviteCard key={inv.id} inv={inv} />)
+                <>
+                  {myInvites.filter((i) => !hiddenIds.includes(i.id)).slice(0, 3).map((inv) => <InviteCard key={inv.id} inv={inv} />)}
+                  {myInvites.filter((i) => !hiddenIds.includes(i.id)).length > 3 && (
+                    <button
+                      onClick={() => setView("invite")}
+                      style={{ width:"100%", background:"none", border:"1px solid #1e1e1e", color:"#555", borderRadius:10, padding:"10px 0", fontSize:12, cursor:"pointer", letterSpacing:0.5, marginTop:4 }}
+                    >
+                      View all {myInvites.filter((i) => !hiddenIds.includes(i.id)).length} invites &rarr;
+                    </button>
+                  )}
+                </>
               )}
             </div>
           </div>
