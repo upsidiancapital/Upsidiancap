@@ -173,7 +173,6 @@ async function dbDeleteResetToken(token) {
   await supabase.from("reset_tokens").delete().eq("token", token);
 }
 
-
 // ─── Shared styles ────────────────────────────────────────────────────────────
 
 const c = {
@@ -249,38 +248,46 @@ function ForgotPasswordScreen({ onBack }) {
   const [sent, setSent]       = useState(false);
   const [loading, setLoading] = useState(false);
 
+  // Basic email format check
+  const isValidEmail = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e.trim());
+
   const handleRequest = async () => {
     setError("");
     if (!email.trim()) return setError("Please enter your email address.");
+    if (!isValidEmail(email)) return setError("Please enter a valid email address.");
     setLoading(true);
 
-    // Check the user exists
     const allUsers = await dbGetAllUsers();
     const found = allUsers.find((u) => u.email === email.trim().toLowerCase());
 
     if (!found) {
-      // Don't reveal whether the email exists — just show success either way
+      // Don't reveal whether the email exists
       setLoading(false);
       setSent(true);
       return;
     }
 
-    // Generate a token and store it with a 1-hour expiry
+    // Generate token with 1-hour expiry
     const token   = Math.random().toString(36).substring(2, 10).toUpperCase() +
                     Math.random().toString(36).substring(2, 10).toUpperCase();
-    const expires = Date.now() + 60 * 60 * 1000; // 1 hour
+    const expires = Date.now() + 60 * 60 * 1000;
     await dbSaveResetToken(token, email.trim().toLowerCase(), expires);
 
-    // In a real app this token would be emailed. Here we display it directly
-    // so the user can copy the reset link and use it.
     const resetLink = window.location.href.split("?")[0] + "?reset=" + token;
+
+    // Send email via Resend through a Supabase Edge Function
+    try {
+      await supabase.functions.invoke("send-reset-email", {
+        body: { email: email.trim().toLowerCase(), resetLink },
+      });
+    } catch (err) {
+      console.error("Email send failed:", err);
+      // Still show success — user can contact admin if email doesn't arrive
+    }
+
     setLoading(false);
     setSent(true);
-    // Store the link in state so we can show it (demo only)
-    setSentLink(resetLink);
   };
-
-  const [sentLink, setSentLink] = useState("");
 
   if (sent) {
     return (
@@ -291,20 +298,8 @@ function ForgotPasswordScreen({ onBack }) {
           <div style={{ width:48, height:48, borderRadius:"50%", background:"#0a1e0a", border:"1px solid #1a3d1a", display:"flex", alignItems:"center", justifyContent:"center", fontSize:22, marginBottom:16 }}>✓</div>
           <div style={c.title}>Check your email</div>
           <div style={{ fontSize:13, color:"#555", marginBottom:24, lineHeight:1.7 }}>
-            If <span style={{ color:"#888" }}>{email}</span> is registered, a password reset link has been sent. Check your inbox and spam folder.
+            If <span style={{ color:"#888" }}>{email}</span> is registered, a reset link has been sent. Check your inbox and spam folder. The link expires in 1 hour.
           </div>
-          {sentLink && (
-            <div style={{ background:"#0a0a0a", border:"1px solid #1e1e1e", borderRadius:10, padding:14, marginBottom:20 }}>
-              <div style={{ fontSize:10, color:"#333", letterSpacing:1.5, textTransform:"uppercase", marginBottom:8 }}>Demo — Reset Link</div>
-              <div style={{ fontSize:11, color:"#555", wordBreak:"break-all", lineHeight:1.6 }}>{sentLink}</div>
-              <button
-                onClick={() => { navigator.clipboard && navigator.clipboard.writeText(sentLink); }}
-                style={{ marginTop:10, width:"100%", background:"#1a1a1a", border:"1px solid #2a2a2a", color:"#888", borderRadius:8, padding:"7px 0", fontSize:11, cursor:"pointer" }}
-              >
-                Copy Link
-              </button>
-            </div>
-          )}
           <button style={c.btnWhite} onClick={onBack}>Back to Sign In &rarr;</button>
         </div>
       </div>
