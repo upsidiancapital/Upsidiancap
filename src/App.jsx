@@ -2090,6 +2090,7 @@ function SecurityAppWithProfile({ user, onLogout, onUserUpdate }) {
   const [refreshing, setRefreshing]   = useState(false);
   const [nigeriaTime, setNigeriaTime] = useState("");
   const [logVisible, setLogVisible]   = useState(true); // toggle all accepted codes
+  const [enlargedPhoto, setEnlargedPhoto] = useState(null); // url of photo to show fullscreen
 
   useEffect(() => {
     const tick = () => {
@@ -2152,8 +2153,10 @@ function SecurityAppWithProfile({ user, onLogout, onUserUpdate }) {
       } else {
         // Log the staff entry
         const entry = {
-          id: Date.now(), guest: staffMember.full_name + " (Staff)",
-          resident: "Resident Staff Access", unit: "—",
+          id: Date.now(),
+          guest: staffMember.full_name,
+          resident: staffMember.resident_email,
+          unit: staffMember.resident_unit || "—",
           code: staffMember.code, estateId: user.estateId,
           time: new Date().toLocaleTimeString("en-NG", { timeZone:"Africa/Lagos" }),
           action: "Staff Entry",
@@ -2198,6 +2201,29 @@ function SecurityAppWithProfile({ user, onLogout, onUserUpdate }) {
     { id:"gate",    label:"Gate",    icon:"◉" },
     { id:"profile", label:"Profile", icon:"◯" },
   ];
+
+  // Fullscreen photo overlay
+  const PhotoOverlay = () => !enlargedPhoto ? null : (
+    <div
+      onClick={() => setEnlargedPhoto(null)}
+      style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.92)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:2000, padding:24 }}
+    >
+      <div style={{ position:"relative", maxWidth:340, width:"100%" }}>
+        <img
+          src={enlargedPhoto}
+          alt="Staff photo"
+          style={{ width:"100%", borderRadius:16, display:"block", boxShadow:"0 20px 60px rgba(0,0,0,0.8)" }}
+        />
+        <button
+          onClick={() => setEnlargedPhoto(null)}
+          style={{ position:"absolute", top:-12, right:-12, background:"#222", border:"1px solid #333", color:"#888", borderRadius:"50%", width:32, height:32, cursor:"pointer", fontSize:16, display:"flex", alignItems:"center", justifyContent:"center" }}
+        >
+          &#x2715;
+        </button>
+        <div style={{ textAlign:"center", marginTop:12, fontSize:12, color:"#555" }}>Tap anywhere to close</div>
+      </div>
+    </div>
+  );
 
   return (
     <div style={c.appWrap}>
@@ -2283,7 +2309,10 @@ function SecurityAppWithProfile({ user, onLogout, onUserUpdate }) {
                       <div style={{ color:"#6bff6b", fontWeight:700, fontSize:15, marginBottom:12 }}>✓ Staff Access Granted</div>
                       <div style={{ display:"flex", alignItems:"center", gap:14, marginBottom:12 }}>
                         {/* Photo — larger for gate visibility */}
-                        <div style={{ width:64, height:64, borderRadius:"50%", background:"#1a1a1a", border:"2px solid #1a3d1a", overflow:"hidden", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center" }}>
+                        <div
+                          onClick={() => gateResult.staff.photo_url && setEnlargedPhoto(gateResult.staff.photo_url)}
+                          style={{ width:64, height:64, borderRadius:"50%", background:"#1a1a1a", border:"2px solid #1a3d1a", overflow:"hidden", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center", cursor: gateResult.staff.photo_url ? "pointer" : "default" }}
+                        >
                           {gateResult.staff.photo_url
                             ? <img
                                 src={gateResult.staff.photo_url}
@@ -2375,9 +2404,14 @@ function SecurityAppWithProfile({ user, onLogout, onUserUpdate }) {
               accessLog.filter((l) => !hiddenLogIds.includes(l.id)).map((log) => (
                 <div key={log.id} style={{ background:"#141414", border:"1px solid #1e1e1e", borderRadius:10, padding:12, marginBottom:8, fontSize:13 }}>
                   <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
-                    <strong style={{ color:"#e0e0e0" }}>{log.guest}</strong>
+                    <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                      <strong style={{ color:"#e0e0e0" }}>{log.guest}</strong>
+                      {log.action === "Staff Entry" && (
+                        <span style={{ background:"#1a150a", border:"1px solid #3d2e10", color:"#c8860a", borderRadius:10, padding:"1px 7px", fontSize:9, fontWeight:700, letterSpacing:0.5 }}>STAFF</span>
+                      )}
+                    </div>
                     <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                      <span style={{ color:"#6bff6b", fontSize:11 }}>{log.action}</span>
+                      <span style={{ color: log.action === "Staff Entry" ? "#c8860a" : "#6bff6b", fontSize:11 }}>{log.action}</span>
                       <button
                         onClick={() => hideLog(log.id)}
                         style={{ background:"none", border:"none", color:"#333", fontSize:10, cursor:"pointer", letterSpacing:0.5 }}
@@ -2408,6 +2442,7 @@ function SecurityAppWithProfile({ user, onLogout, onUserUpdate }) {
           </button>
         ))}
       </div>
+      <PhotoOverlay />
     </div>
   );
 }
