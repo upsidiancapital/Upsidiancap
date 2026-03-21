@@ -264,7 +264,7 @@ function ForgotPasswordScreen({ onBack }) {
     // Use Supabase built-in password reset — sends email automatically
     const { error: resetError } = await supabase.auth.resetPasswordForEmail(
       email.trim().toLowerCase(),
-      { redirectTo: window.location.origin + "/?reset=supabase" }
+      { redirectTo: window.location.origin }
     );
 
     // Don't reveal if email exists or not — always show success
