@@ -248,8 +248,10 @@ function ForgotPasswordScreen({ onBack }) {
   const [sent, setSent]       = useState(false);
   const [loading, setLoading] = useState(false);
 
-  // Basic email format check
-  const isValidEmail = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e.trim());
+  const isValidEmail = (e) => {
+    const parts = e.trim().split("@");
+    return parts.length === 2 && parts[0].length > 0 && parts[1].includes(".");
+  };
 
   const handleRequest = async () => {
     setError("");
@@ -257,34 +259,14 @@ function ForgotPasswordScreen({ onBack }) {
     if (!isValidEmail(email)) return setError("Please enter a valid email address.");
     setLoading(true);
 
-    const allUsers = await dbGetAllUsers();
-    const found = allUsers.find((u) => u.email === email.trim().toLowerCase());
+    // Use Supabase built-in password reset — sends email automatically
+    const { error: resetError } = await supabase.auth.resetPasswordForEmail(
+      email.trim().toLowerCase(),
+      { redirectTo: window.location.origin + "/?reset=supabase" }
+    );
 
-    if (!found) {
-      // Don't reveal whether the email exists
-      setLoading(false);
-      setSent(true);
-      return;
-    }
-
-    // Generate token with 1-hour expiry
-    const token   = Math.random().toString(36).substring(2, 10).toUpperCase() +
-                    Math.random().toString(36).substring(2, 10).toUpperCase();
-    const expires = Date.now() + 60 * 60 * 1000;
-    await dbSaveResetToken(token, email.trim().toLowerCase(), expires);
-
-    const resetLink = window.location.href.split("?")[0] + "?reset=" + token;
-
-    // Send email via Resend through a Supabase Edge Function
-    try {
-      await supabase.functions.invoke("send-reset-email", {
-        body: { email: email.trim().toLowerCase(), resetLink },
-      });
-    } catch (err) {
-      console.error("Email send failed:", err);
-      // Still show success — user can contact admin if email doesn't arrive
-    }
-
+    // Don't reveal if email exists or not — always show success
+    if (resetError) console.error("Reset email error:", resetError);
     setLoading(false);
     setSent(true);
   };
@@ -295,7 +277,9 @@ function ForgotPasswordScreen({ onBack }) {
         <div style={c.authCard}>
           <div style={c.logo}>UPSIDIAN</div>
           <div style={c.logoSub}>SMART ESTATE MANAGEMENT</div>
-          <div style={{ width:48, height:48, borderRadius:"50%", background:"#0a1e0a", border:"1px solid #1a3d1a", display:"flex", alignItems:"center", justifyContent:"center", fontSize:22, marginBottom:16 }}>✓</div>
+          <div style={{ width:48, height:48, borderRadius:"50%", background:"#0a1e0a", border:"1px solid #1a3d1a", display:"flex", alignItems:"center", justifyContent:"center", fontSize:22, marginBottom:16 }}>
+            &#10003;
+          </div>
           <div style={c.title}>Check your email</div>
           <div style={{ fontSize:13, color:"#555", marginBottom:24, lineHeight:1.7 }}>
             If <span style={{ color:"#888" }}>{email}</span> is registered, a reset link has been sent. Check your inbox and spam folder. The link expires in 1 hour.
@@ -327,34 +311,32 @@ function ForgotPasswordScreen({ onBack }) {
           onKeyDown={(e) => e.key === "Enter" && handleRequest()}
         />
         <button style={c.btnWhite} onClick={handleRequest} disabled={loading}>
-          {loading ? "Sending..." : "Send Reset Link"} {!loading && "→"}
+          {loading ? "Sending..." : "Send Reset Link →"}
         </button>
       </div>
     </div>
   );
 }
 
-// ─── Reset Password Screen ─────────────────────────────────────────────────────
+// ─── Reset Password Screen (Supabase Auth) ────────────────────────────────────
+// Handles the link Supabase emails — the session is set automatically via URL hash
 
-function ResetPasswordScreen({ token, onDone }) {
-  const [form, setForm]   = useState({ newPw:"", confirm:"" });
-  const [error, setError] = useState("");
-  const [ok, setOk]       = useState(false);
-  const [loading, setLoading]   = useState(false);
-  const [tokenValid, setTokenValid] = useState(null); // null=checking, true, false
-  const [tokenEmail, setTokenEmail] = useState("");
+function ResetPasswordScreen({ onDone }) {
+  const [form, setForm]     = useState({ newPw:"", confirm:"" });
+  const [error, setError]   = useState("");
+  const [ok, setOk]         = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [ready, setReady]   = useState(false); // true once Supabase confirms the session
 
   useEffect(() => {
-    (async () => {
-      const found = await dbGetResetToken(token);
-      if (!found) {
-        setTokenValid(false);
-      } else {
-        setTokenValid(true);
-        setTokenEmail(found.email);
+    // Supabase fires an auth state change when the reset link is opened
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+      if (event === "PASSWORD_RECOVERY") {
+        setReady(true);
       }
-    })();
-  }, [token]);
+    });
+    return () => subscription.unsubscribe();
+  }, []);
 
   const handleReset = async () => {
     setError("");
@@ -363,33 +345,30 @@ function ResetPasswordScreen({ token, onDone }) {
     if (form.newPw !== form.confirm) return setError("Passwords do not match.");
     setLoading(true);
 
-    const ok = await dbUpdatePassword(tokenEmail, form.newPw);
-    if (!ok) { setLoading(false); return setError("Failed to update password. Please try again."); }
-    await dbDeleteResetToken(token);
+    // Update password in Supabase Auth
+    const { error: authErr } = await supabase.auth.updateUser({ password: form.newPw });
+    if (authErr) {
+      setLoading(false);
+      return setError("Failed to update password. Please try again.");
+    }
 
+    // Also update in our own users table so login still works
+    const { data: { user: authUser } } = await supabase.auth.getUser();
+    if (authUser?.email) {
+      await dbUpdatePassword(authUser.email, form.newPw);
+    }
+
+    await supabase.auth.signOut();
     setLoading(false);
     setOk(true);
   };
 
-  if (tokenValid === null) {
+  if (!ready) {
     return (
       <div style={c.page}>
         <div style={c.authCard}>
           <div style={c.logo}>UPSIDIAN</div>
           <div style={{ color:"#555", fontSize:13, marginTop:16 }}>Verifying reset link...</div>
-        </div>
-      </div>
-    );
-  }
-
-  if (!tokenValid) {
-    return (
-      <div style={c.page}>
-        <div style={c.authCard}>
-          <div style={c.logo}>UPSIDIAN</div>
-          <div style={c.logoSub}>SMART ESTATE MANAGEMENT</div>
-          <div style={{ ...c.err, marginTop:16 }}>This reset link is invalid or has expired. Please request a new one.</div>
-          <button style={{ ...c.btnWhite, marginTop:8 }} onClick={onDone}>Back to Sign In &rarr;</button>
         </div>
       </div>
     );
@@ -401,9 +380,9 @@ function ResetPasswordScreen({ token, onDone }) {
         <div style={c.authCard}>
           <div style={c.logo}>UPSIDIAN</div>
           <div style={c.logoSub}>SMART ESTATE MANAGEMENT</div>
-          <div style={{ width:48, height:48, borderRadius:"50%", background:"#0a1e0a", border:"1px solid #1a3d1a", display:"flex", alignItems:"center", justifyContent:"center", fontSize:22, marginBottom:16 }}>✓</div>
+          <div style={{ width:48, height:48, borderRadius:"50%", background:"#0a1e0a", border:"1px solid #1a3d1a", display:"flex", alignItems:"center", justifyContent:"center", fontSize:22, marginBottom:16 }}>&#10003;</div>
           <div style={c.title}>Password updated</div>
-          <div style={{ fontSize:13, color:"#555", marginBottom:24 }}>Your password has been changed successfully. You can now sign in.</div>
+          <div style={{ fontSize:13, color:"#555", marginBottom:24 }}>Your password has been reset. You can now sign in with your new password.</div>
           <button style={c.btnWhite} onClick={onDone}>Sign In &rarr;</button>
         </div>
       </div>
@@ -416,14 +395,16 @@ function ResetPasswordScreen({ token, onDone }) {
         <div style={c.logo}>UPSIDIAN</div>
         <div style={c.logoSub}>SMART ESTATE MANAGEMENT</div>
         <div style={c.title}>Choose new password</div>
-        <div style={c.desc}>Setting a new password for <span style={{ color:"#888" }}>{tokenEmail}</span>.</div>
+        <div style={c.desc}>Enter and confirm your new password below.</div>
 
         {error && <div style={c.err}>{error}</div>}
 
         <label style={c.label}>New Password</label>
-        <PwInput placeholder="At least 6 characters" value={form.newPw} onChange={(e) => setForm(p => ({ ...p, newPw: e.target.value }))} style={c.input} />
+        <PwInput placeholder="At least 6 characters" value={form.newPw}
+          onChange={(e) => setForm(p => ({ ...p, newPw: e.target.value }))} style={c.input} />
         <label style={c.label}>Confirm New Password</label>
-        <PwInput placeholder="Repeat new password" value={form.confirm} onChange={(e) => setForm(p => ({ ...p, confirm: e.target.value }))} style={c.input} />
+        <PwInput placeholder="Repeat new password" value={form.confirm}
+          onChange={(e) => setForm(p => ({ ...p, confirm: e.target.value }))} style={c.input} />
         <button style={c.btnWhite} onClick={handleReset} disabled={loading}>
           {loading ? "Saving..." : "Update Password →"}
         </button>
@@ -1643,20 +1624,28 @@ function SecurityAppWithProfile({ user, onLogout, onUserUpdate }) {
 // ─── Root ─────────────────────────────────────────────────────────────────────
 
 export default function UpsidianApp() {
-  const [user, setUser] = useState(null);
-  const logout          = () => setUser(null);
-  const updateUser      = (updated) => setUser(updated);
+  const [user, setUser]           = useState(null);
+  const [showReset, setShowReset] = useState(false);
+  const logout      = () => setUser(null);
+  const updateUser  = (updated) => setUser(updated);
 
-  // Check if we landed on a password reset link (?reset=TOKEN)
-  const resetToken = new URLSearchParams(window.location.search).get("reset");
-  if (resetToken) {
+  useEffect(() => {
+    // Supabase puts recovery tokens in the URL hash when user clicks reset link
+    // Listen for the PASSWORD_RECOVERY event and show the reset screen
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+      if (event === "PASSWORD_RECOVERY") {
+        setShowReset(true);
+      }
+    });
+    return () => subscription.unsubscribe();
+  }, []);
+
+  if (showReset) {
     return (
       <ResetPasswordScreen
-        token={resetToken}
         onDone={() => {
-          // Strip the query param and go to login
+          setShowReset(false);
           window.history.replaceState({}, "", window.location.pathname);
-          setUser(null);
         }}
       />
     );
