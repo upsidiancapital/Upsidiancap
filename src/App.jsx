@@ -80,26 +80,28 @@ const supabase = createClient(
 // ─── DB helpers ───────────────────────────────────────────────────────────────
 
 // USERS
-async function dbGetAllUsers() {
-  const { data, error } = await supabase.from("users").select("*");
-  if (error) { console.error("dbGetAllUsers:", error); return []; }
-  return (data || []).map(u => ({
-    email: u.email, password: u.password, name: u.name,
-    estateId: u.estate_id, role: u.role,
-    createdAt: u.created_at ? new Date(u.created_at).toLocaleDateString("en-NG", { day:"numeric", month:"short", year:"numeric" }) : null,
-  }));
+async function dbGetUserByEmail(email) {
+  const { data, error } = await supabase.from("users").select("*").eq("email", email).single();
+  if (error || !data) return null;
+  return {
+    email: data.email, name: data.name,
+    estateId: data.estate_id, role: data.role,
+    createdAt: data.created_at ? new Date(data.created_at).toLocaleDateString("en-NG", { day:"numeric", month:"short", year:"numeric" }) : null,
+  };
 }
 async function dbCreateUser(user) {
   const { error } = await supabase.from("users").insert({
-    email: user.email, password: user.password, name: user.name,
+    email: user.email, name: user.name,
     estate_id: user.estateId, role: user.role,
   });
   if (error) { console.error("dbCreateUser:", error); return false; }
   return true;
 }
 async function dbUpdatePassword(email, newPassword) {
-  const { error } = await supabase.from("users").update({ password: newPassword }).eq("email", email);
-  if (error) { console.error("dbUpdatePassword:", error); return false; }
+  // Update in our users table (keep in sync)
+  await supabase.from("users").update({ password: newPassword }).eq("email", email);
+  // Note: Supabase Auth password is updated separately via supabase.auth.updateUser()
+  // in the ResetPasswordScreen — no need to call it here again
   return true;
 }
 
@@ -454,11 +456,17 @@ function AuthScreen({ onLogin }) {
 
   const handleLogin = async () => {
     setError("");
-    const users = await dbGetAllUsers();
-    const found = users.find((u) => u.email === form.email && u.password === form.password);
-    if (!found) return setError("Invalid email or password.");
-    const estate = ESTATES.find((e) => e.id === found.estateId);
-    onLogin({ ...found, estateName: estate ? estate.name : "Estate" });
+    // Sign in via Supabase Auth
+    const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+      email: form.email.trim().toLowerCase(),
+      password: form.password,
+    });
+    if (authError || !authData.user) return setError("Invalid email or password.");
+    // Fetch the user profile from our users table
+    const profile = await dbGetUserByEmail(form.email.trim().toLowerCase());
+    if (!profile) return setError("Account not found. Please contact your estate admin.");
+    const estate = ESTATES.find((e) => e.id === profile.estateId);
+    onLogin({ ...profile, estateName: estate ? estate.name : "Estate" });
   };
 
   const handleSignup = async () => {
@@ -475,12 +483,29 @@ function AuthScreen({ onLogin }) {
     if (form.estateCode !== estate.code) return setError("Invalid estate code for " + estate.name + ".");
     if (requiresAdminCode && form.adminCode !== "1234")
       return setError("Invalid admin code. Contact your estate administrator.");
-    const existingUsers = await dbGetAllUsers();
-    if (existingUsers.find((u) => u.email === form.email)) return setError("Email already registered.");
-    const newUser = { email:form.email, password:form.password, name:form.name, estateId:form.estateId, role };
+
+    // Create in Supabase Auth first
+    const { data: authData, error: authError } = await supabase.auth.signUp({
+      email: form.email.trim().toLowerCase(),
+      password: form.password,
+    });
+    if (authError) {
+      if (authError.message.includes("already registered")) return setError("Email already registered.");
+      return setError("Sign-up failed: " + authError.message);
+    }
+
+    // Then save the profile in our users table
+    const newUser = { email: form.email.trim().toLowerCase(), name: form.name, estateId: form.estateId, role };
     const saved = await dbCreateUser(newUser);
-    if (!saved) return setError("Sign-up failed — could not save your account. Please try again.");
-    setSuccess("Account created! Registered to " + estate.name + " as " + (role === "security" ? "Security" : "Resident") + ".");
+    if (!saved) {
+      // Rollback: delete from Supabase Auth if table insert fails
+      await supabase.auth.admin?.deleteUser(authData.user.id);
+      return setError("Sign-up failed — could not save your profile. Please try again.");
+    }
+
+    // Sign out immediately — user signs in manually (no email confirmation needed)
+    await supabase.auth.signOut();
+    setSuccess("Account created! Registered to " + estate.name + " as " + (role === "security" ? "Security" : "Resident") + ". You can now sign in.");
     setMode("login");
     setForm({ name:"", email:form.email, password:"", confirm:"", estateId:"", estateCode:"", adminCode:"" });
   };
@@ -1314,12 +1339,22 @@ function ProfileView({ user, onUserUpdate, onLogout }) {
       return setPwErr("New passwords do not match.");
     if (pwForm.newPw.length < 6)
       return setPwErr("Password must be at least 6 characters.");
-    if (pwForm.current !== user.password)
-      return setPwErr("Current password is incorrect.");
 
+    // Verify current password by re-signing in
+    const { error: signInErr } = await supabase.auth.signInWithPassword({
+      email: user.email,
+      password: pwForm.current,
+    });
+    if (signInErr) return setPwErr("Current password is incorrect.");
+
+    // Update in Supabase Auth
+    const { error: updateErr } = await supabase.auth.updateUser({ password: pwForm.newPw });
+    if (updateErr) return setPwErr("Failed to update password. Please try again.");
+
+    // Keep users table in sync
     await dbUpdatePassword(user.email, pwForm.newPw);
 
-    onUserUpdate({ ...user, password: pwForm.newPw });
+    onUserUpdate({ ...user });
     setPwOk("Password updated successfully.");
     setPwForm({ current:"", newPw:"", confirm:"" });
   };
