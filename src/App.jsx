@@ -302,9 +302,9 @@ async function dbDeleteResetToken(token) {
 const c = {
   page:      { fontFamily:"'DM Sans','Helvetica Neue',sans-serif", minHeight:"100dvh", background:"#0a0a0a", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"24px" },
   authCard:  { background:"#141414", border:"1px solid #2a2a2a", borderRadius:20, padding:"40px 32px", width:"100%", maxWidth:390 },
-  appWrap:   { fontFamily:"'DM Sans','Helvetica Neue',sans-serif", maxWidth:430, margin:"0 auto", height:"100dvh", maxHeight:"100dvh", background:"#0f0f0f", display:"flex", flexDirection:"column", color:"#fff", position:"relative", overflow:"hidden" },
+  appWrap:   { fontFamily:"'DM Sans','Helvetica Neue',sans-serif", maxWidth:430, width:"100%", margin:"0 auto", height:"100dvh", maxHeight:"100dvh", background:"#0f0f0f", display:"flex", flexDirection:"column", color:"#fff", position:"relative", overflow:"hidden" },
   header:    { background:"#141414", borderBottom:"1px solid #1e1e1e", padding:"16px 20px", display:"flex", alignItems:"center", justifyContent:"space-between" },
-  content:   { flex:1, padding:16, overflowY:"auto", WebkitOverflowScrolling:"touch" },
+  content:   { flex:1, padding:16, overflowY:"auto", overflowX:"hidden", WebkitOverflowScrolling:"touch" },
   bottomNav: { display:"flex", background:"#141414", borderTop:"1px solid #1e1e1e", padding:"6px 0", paddingBottom:"calc(6px + env(safe-area-inset-bottom))" },
 
   logo:    { fontSize:24, fontWeight:800, color:"#fff", letterSpacing:4, marginBottom:4 },
@@ -320,13 +320,13 @@ const c = {
   appInput:  { width:"100%", padding:"12px 14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontSize:14, color:"#fff", boxSizing:"border-box", outline:"none", marginBottom:14 },
   halfInput: { width:"100%", padding:"12px 14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontSize:14, color:"#fff", boxSizing:"border-box", outline:"none" },
   select:    { width:"100%", padding:"12px 14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontSize:14, color:"#fff", boxSizing:"border-box", marginBottom:14 },
-  gateInput: { flex:1, padding:"13px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontSize:22, textAlign:"center", letterSpacing:6, fontWeight:800, textTransform:"uppercase", color:"#fff", outline:"none" },
+  gateInput: { flex:1, padding:"13px 8px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontSize:20, textAlign:"center", letterSpacing:4, fontWeight:800, textTransform:"uppercase", color:"#fff", outline:"none", minWidth:0 },
 
   btnWhite:  { width:"100%", background:"#fff", color:"#000", border:"none", padding:"13px", borderRadius:10, fontSize:14, fontWeight:700, cursor:"pointer", letterSpacing:0.5, marginTop:4 },
   btnGhost:  { background:"none", border:"none", color:"#fff", fontSize:13, cursor:"pointer", textDecoration:"underline", padding:0 },
   btnBack:   { background:"none", border:"none", color:"#555", fontSize:12, cursor:"pointer", padding:0, marginBottom:22, display:"flex", alignItems:"center", gap:5, letterSpacing:0.5 },
   btnDark:   { width:"100%", background:"#1a1a1a", color:"#fff", border:"1px solid #2a2a2a", padding:10, borderRadius:8, fontSize:13, fontWeight:600, cursor:"pointer", marginTop:10 },
-  btnVerify: { background:"#fff", color:"#000", border:"none", padding:"13px 20px", borderRadius:10, fontWeight:700, cursor:"pointer", fontSize:14 },
+  btnVerify: { background:"#fff", color:"#000", border:"none", padding:"13px 16px", borderRadius:10, fontWeight:700, cursor:"pointer", fontSize:14, flexShrink:0, whiteSpace:"nowrap" },
   btnApp:    { width:"100%", background:"#fff", color:"#000", border:"none", padding:14, borderRadius:10, fontSize:14, fontWeight:700, cursor:"pointer", letterSpacing:0.5 },
   btnLogout: { background:"none", border:"1px solid #222", color:"#444", borderRadius:8, padding:"4px 10px", fontSize:11, cursor:"pointer", letterSpacing:0.5 },
   btnDanger: { width:"100%", background:"#1a0a0a", color:"#ff6b6b", border:"1px solid #3d1515", padding:12, borderRadius:10, fontSize:13, fontWeight:600, cursor:"pointer", marginTop:8 },
@@ -1787,7 +1787,7 @@ function SecurityAppWithProfile({ user, onLogout, onUserUpdate }) {
             <div style={{ background:"#141414", border:"1px solid #1e1e1e", borderRadius:16, padding:20, marginBottom:20 }}>
               <div style={{ fontWeight:700, fontSize:16, marginBottom:4 }}>Verify Guest Access</div>
               <div style={{ color:"#555", fontSize:13, marginBottom:18 }}>Enter the 6-character code from the resident's invite.</div>
-              <div style={{ display:"flex", gap:8, marginBottom:6 }}>
+              <div style={{ display:"flex", gap:8, marginBottom:6, width:"100%" }}>
                 <input value={gateCode} onChange={(e) => setGateCode(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && verify()}
                   placeholder="AB12CD" maxLength={6} style={c.gateInput} />
