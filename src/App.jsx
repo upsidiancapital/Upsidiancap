@@ -4,10 +4,9 @@ import { useState, useEffect, useCallback } from "react";
 
 const generateCode = () => Math.random().toString(36).substring(2, 8).toUpperCase();
 
-const ESTATES = [
-  { id: "cove_towers",   name: "Cove Towers",  code: "1234" },
-  { id: "banana_island", name: "Banana Island", code: "5678" },
-];
+// ESTATES is loaded from Supabase at runtime — see dbGetEstates()
+// Kept as empty fallback only
+let ESTATES = [];
 
 // Seed users live in the Supabase database now (inserted via supabase_schema.sql)
 // Kept here only for reference — not used in logic anymore.
@@ -78,6 +77,60 @@ const supabase = createClient(
 );
 
 // ─── DB helpers ───────────────────────────────────────────────────────────────
+
+// ESTATES
+async function dbGetEstates() {
+  const { data, error } = await supabase.from("estates").select("*").eq("active", true).order("name");
+  if (error) { console.error("dbGetEstates:", error); return []; }
+  return (data || []).map(e => ({
+    id: e.id, name: e.name, code: e.security_code, active: e.active,
+    createdAt: e.created_at,
+  }));
+}
+async function dbCreateEstate(estate) {
+  const { error } = await supabase.from("estates").insert({
+    id: estate.id, name: estate.name, security_code: estate.code,
+  });
+  if (error) { console.error("dbCreateEstate:", error); return false; }
+  return true;
+}
+async function dbDeactivateEstate(id) {
+  const { error } = await supabase.from("estates").update({ active: false }).eq("id", id);
+  if (error) { console.error("dbDeactivateEstate:", error); return false; }
+  return true;
+}
+
+// ADMIN — approved residents management
+async function dbGetApprovedResidents(estateId) {
+  const q = supabase.from("approved_residents").select("*").order("unit_name");
+  if (estateId) q.eq("estate_id", estateId);
+  const { data, error } = await q;
+  if (error) { console.error("dbGetApprovedResidents:", error); return []; }
+  return data || [];
+}
+async function dbAddApprovedResident(email, estateId, unitName) {
+  const { error } = await supabase.from("approved_residents").upsert({
+    email: email.trim().toLowerCase(), estate_id: estateId, unit_name: unitName, used: false,
+  }, { onConflict: "email,estate_id" });
+  if (error) { console.error("dbAddApprovedResident:", error); return false; }
+  return true;
+}
+async function dbResetApprovedResident(email, estateId) {
+  const { error } = await supabase.from("approved_residents")
+    .update({ used: false }).eq("email", email).eq("estate_id", estateId);
+  if (error) { console.error("dbResetApprovedResident:", error); return false; }
+  return true;
+}
+async function dbDeleteApprovedResident(id) {
+  const { error } = await supabase.from("approved_residents").delete().eq("id", id);
+  if (error) { console.error("dbDeleteApprovedResident:", error); return false; }
+  return true;
+}
+async function dbGetAllUsersAdmin() {
+  const { data, error } = await supabase.from("users").select("*").order("created_at", { ascending: false });
+  if (error) { console.error("dbGetAllUsersAdmin:", error); return []; }
+  return data || [];
+}
 
 // USERS
 async function dbGetUserByEmail(email) {
@@ -446,7 +499,7 @@ function PwInput({ placeholder, value, onChange, onKeyDown, style }) {
 
 // ─── Auth Screen ──────────────────────────────────────────────────────────────
 
-function AuthScreen({ onLogin }) {
+function AuthScreen({ onLogin, onLogoTap = () => {} }) {
   const [mode, setMode]   = useState("login");
   const [role, setRole]   = useState("resident");
   const [form, setForm]   = useState({ name:"", email:"", password:"", confirm:"", estateId:"", estateCode:"", adminCode:"" });
@@ -560,7 +613,7 @@ function AuthScreen({ onLogin }) {
         {mode === "signup" && (
           <button style={c.btnBack} onClick={goLogin}>&larr; Back to Sign In</button>
         )}
-        <div style={c.logo}>UPSIDIAN</div>
+        <div style={{ ...c.logo, cursor:"default", userSelect:"none" }} onClick={onLogoTap}>UPSIDIAN</div>
         <div style={c.logoSub}>SMART ESTATE MANAGEMENT</div>
         <div style={c.title}>{mode === "login" ? "Welcome back" : "Create account"}</div>
         <div style={c.desc}>{mode === "login" ? "Sign in to your estate portal." : "Join your estate community."}</div>
@@ -1708,17 +1761,326 @@ function SecurityAppWithProfile({ user, onLogout, onUserUpdate }) {
   );
 }
 
+
+// ─── Admin Panel ──────────────────────────────────────────────────────────────
+
+function AdminPanel({ onExit }) {
+  const ADMIN_PW = "rtglisunq58tghq59g8p8fhqb94wqb8p98qb3pfbdliweauksnc";
+  const [authed, setAuthed]       = useState(false);
+  const [pwInput, setPwInput]     = useState("");
+  const [pwErr, setPwErr]         = useState("");
+  const [view, setView]           = useState("estates"); // estates | residents | users
+  const [estates, setEstates]     = useState([]);
+  const [residents, setResidents] = useState([]);
+  const [users, setUsers]         = useState([]);
+  const [selEstate, setSelEstate] = useState("");
+  const [loading, setLoading]     = useState(false);
+  const [msg, setMsg]             = useState("");
+
+  // New estate form
+  const [newEstate, setNewEstate] = useState({ id:"", name:"", code:"" });
+  // New resident form
+  const [newRes, setNewRes]       = useState({ email:"", unit:"" });
+  // Bulk paste
+  const [bulkText, setBulkText]   = useState("");
+  const [bulkMsg, setBulkMsg]     = useState("");
+
+  const load = async () => {
+    setLoading(true);
+    const [e, u] = await Promise.all([dbGetEstates(), dbGetAllUsersAdmin()]);
+    setEstates(e); setUsers(u);
+    ESTATES.length = 0; ESTATES.push(...e);
+    setLoading(false);
+  };
+
+  const loadResidents = async (estateId) => {
+    const r = await dbGetApprovedResidents(estateId);
+    setResidents(r);
+  };
+
+  useEffect(() => { if (authed) load(); }, [authed]);
+  useEffect(() => { if (authed && selEstate) loadResidents(selEstate); }, [selEstate, authed]);
+
+  const handleLogin = () => {
+    if (pwInput === ADMIN_PW) { setAuthed(true); setPwErr(""); }
+    else setPwErr("Incorrect password.");
+  };
+
+  const addEstate = async () => {
+    if (!newEstate.id || !newEstate.name || !newEstate.code)
+      return setMsg("All estate fields required.");
+    const id = newEstate.id.toLowerCase().replace(/\s+/g, "_");
+    const ok = await dbCreateEstate({ ...newEstate, id });
+    if (ok) { setMsg("Estate added!"); setNewEstate({ id:"", name:"", code:"" }); load(); }
+    else setMsg("Failed to add estate.");
+  };
+
+  const addResident = async () => {
+    if (!selEstate || !newRes.email || !newRes.unit)
+      return setMsg("Select estate, enter email and unit.");
+    const ok = await dbAddApprovedResident(newRes.email, selEstate, newRes.unit);
+    if (ok) { setMsg("Resident added!"); setNewRes({ email:"", unit:"" }); loadResidents(selEstate); }
+    else setMsg("Failed. Email may already exist for this estate.");
+  };
+
+  const handleBulkAdd = async () => {
+    if (!selEstate || !bulkText.trim()) return setBulkMsg("Select an estate and paste data.");
+    const lines = bulkText.trim().split("\n").filter(l => l.trim());
+    let added = 0, failed = 0;
+    for (const line of lines) {
+      // Support: "email, unit" or "email  unit" (tab-separated)
+      const parts = line.split(/[,	]/).map(p => p.trim()).filter(Boolean);
+      if (parts.length < 2) { failed++; continue; }
+      const [email, ...unitParts] = parts;
+      const unit = unitParts.join(", ");
+      const ok = await dbAddApprovedResident(email, selEstate, unit);
+      ok ? added++ : failed++;
+    }
+    setBulkMsg(`Done — ${added} added, ${failed} failed.`);
+    setBulkText("");
+    loadResidents(selEstate);
+  };
+
+  const a = {
+    wrap:    { fontFamily:"'DM Sans','Helvetica Neue',sans-serif", minHeight:"100vh", background:"#0a0a0a", color:"#fff", padding:24 },
+    header:  { display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:28, paddingBottom:16, borderBottom:"1px solid #1e1e1e" },
+    logo:    { fontSize:20, fontWeight:800, letterSpacing:4, color:"#fff" },
+    tab:     (active) => ({ background: active ? "#fff" : "#1a1a1a", color: active ? "#000" : "#555", border: active ? "none" : "1px solid #2a2a2a", borderRadius:8, padding:"8px 16px", fontSize:12, fontWeight:700, cursor:"pointer", letterSpacing:0.5 }),
+    card:    { background:"#141414", border:"1px solid #1e1e1e", borderRadius:14, padding:20, marginBottom:16 },
+    label:   { fontSize:10, fontWeight:600, color:"#666", letterSpacing:1.5, display:"block", marginBottom:6, textTransform:"uppercase" },
+    input:   { width:"100%", padding:"10px 12px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:8, fontSize:13, color:"#fff", boxSizing:"border-box", outline:"none", marginBottom:10 },
+    btn:     { background:"#fff", color:"#000", border:"none", padding:"10px 20px", borderRadius:8, fontSize:13, fontWeight:700, cursor:"pointer" },
+    btnSm:   { background:"#1a1a1a", color:"#888", border:"1px solid #2a2a2a", padding:"4px 10px", borderRadius:6, fontSize:11, cursor:"pointer" },
+    btnRed:  { background:"#1a0a0a", color:"#ff6b6b", border:"1px solid #3d1515", padding:"4px 10px", borderRadius:6, fontSize:11, cursor:"pointer" },
+    section: { fontWeight:700, fontSize:11, color:"#555", letterSpacing:2, textTransform:"uppercase", marginBottom:12 },
+    row:     { display:"flex", justifyContent:"space-between", alignItems:"center", padding:"10px 0", borderBottom:"1px solid #1a1a1a", fontSize:13 },
+    msg:     { background:"#0a1e0a", border:"1px solid #1a3d1a", borderRadius:8, padding:"10px 14px", color:"#6bff6b", fontSize:12, marginBottom:12 },
+    err:     { background:"#1e0a0a", border:"1px solid #3d1515", borderRadius:8, padding:"10px 14px", color:"#ff6b6b", fontSize:12, marginBottom:12 },
+  };
+
+  // ── Login gate ────────────────────────────────────────────────────────────
+  if (!authed) {
+    return (
+      <div style={{ ...a.wrap, display:"flex", alignItems:"center", justifyContent:"center" }}>
+        <div style={{ background:"#141414", border:"1px solid #2a2a2a", borderRadius:20, padding:"40px 32px", width:"100%", maxWidth:360 }}>
+          <div style={a.logo}>UPSIDIAN</div>
+          <div style={{ fontSize:10, color:"#444", letterSpacing:1.5, marginBottom:28 }}>ADMIN PANEL</div>
+          <div style={{ fontSize:16, fontWeight:700, marginBottom:20 }}>Admin Access</div>
+          {pwErr && <div style={a.err}>{pwErr}</div>}
+          <label style={a.label}>Admin Password</label>
+          <input style={a.input} type="password" placeholder="Enter admin password"
+            value={pwInput} onChange={e => setPwInput(e.target.value)}
+            onKeyDown={e => e.key === "Enter" && handleLogin()} />
+          <button style={{ ...a.btn, width:"100%", marginTop:4 }} onClick={handleLogin}>
+            Enter Admin Panel &rarr;
+          </button>
+          <div style={{ marginTop:16, textAlign:"center" }}>
+            <button onClick={onExit} style={{ background:"none", border:"none", color:"#444", fontSize:12, cursor:"pointer" }}>
+              &larr; Back to App
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Main admin panel ──────────────────────────────────────────────────────
+  return (
+    <div style={a.wrap}>
+      <div style={a.header}>
+        <div>
+          <div style={a.logo}>UPSIDIAN</div>
+          <div style={{ fontSize:10, color:"#444", letterSpacing:1.5 }}>ADMIN PANEL</div>
+        </div>
+        <div style={{ display:"flex", gap:8 }}>
+          <button style={a.btnSm} onClick={load}>Refresh</button>
+          <button style={a.btnSm} onClick={onExit}>Exit Admin</button>
+        </div>
+      </div>
+
+      {/* Stats row */}
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:12, marginBottom:24 }}>
+        {[
+          { label:"Estates", value: estates.length },
+          { label:"Approved Residents", value: residents.length || "—" },
+          { label:"Signed Up Users", value: users.filter(u => u.role === "resident").length },
+        ].map(s => (
+          <div key={s.label} style={{ background:"#141414", border:"1px solid #1e1e1e", borderRadius:12, padding:16 }}>
+            <div style={{ fontSize:26, fontWeight:800 }}>{s.value}</div>
+            <div style={{ fontSize:11, color:"#555", marginTop:2 }}>{s.label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Tabs */}
+      <div style={{ display:"flex", gap:8, marginBottom:20 }}>
+        {["estates","residents","users"].map(t => (
+          <button key={t} style={a.tab(view === t)} onClick={() => setView(t)}>
+            {t.charAt(0).toUpperCase() + t.slice(1)}
+          </button>
+        ))}
+      </div>
+
+      {msg && <div style={a.msg}>{msg}</div>}
+
+      {/* ── ESTATES TAB ── */}
+      {view === "estates" && (
+        <div>
+          <div style={a.card}>
+            <div style={a.section}>Add New Estate</div>
+            <label style={a.label}>Estate ID (no spaces, e.g. lekki_gardens)</label>
+            <input style={a.input} placeholder="lekki_gardens" value={newEstate.id}
+              onChange={e => setNewEstate(p => ({ ...p, id: e.target.value.toLowerCase().replace(/\s/g,"_") }))} />
+            <label style={a.label}>Display Name</label>
+            <input style={a.input} placeholder="Lekki Gardens" value={newEstate.name}
+              onChange={e => setNewEstate(p => ({ ...p, name: e.target.value }))} />
+            <label style={a.label}>Security Admin Code</label>
+            <input style={a.input} placeholder="e.g. gate9999" value={newEstate.code}
+              onChange={e => setNewEstate(p => ({ ...p, code: e.target.value }))} />
+            <button style={a.btn} onClick={addEstate}>Add Estate</button>
+          </div>
+
+          <div style={a.card}>
+            <div style={a.section}>All Estates ({estates.length})</div>
+            {loading ? <div style={{ color:"#333", fontSize:13 }}>Loading...</div> :
+              estates.length === 0 ? <div style={{ color:"#333", fontSize:13 }}>No estates yet.</div> :
+              estates.map(e => (
+                <div key={e.id} style={a.row}>
+                  <div>
+                    <div style={{ fontWeight:600, color:"#e0e0e0" }}>{e.name}</div>
+                    <div style={{ fontSize:11, color:"#444" }}>ID: {e.id} &nbsp;&middot;&nbsp; Security code: {e.code}</div>
+                  </div>
+                  <button style={a.btnRed} onClick={async () => { await dbDeactivateEstate(e.id); load(); }}>
+                    Deactivate
+                  </button>
+                </div>
+              ))
+            }
+          </div>
+        </div>
+      )}
+
+      {/* ── RESIDENTS TAB ── */}
+      {view === "residents" && (
+        <div>
+          <div style={a.card}>
+            <div style={a.section}>Select Estate</div>
+            <select value={selEstate} onChange={e => setSelEstate(e.target.value)}
+              style={{ ...a.input, marginBottom:0, color: selEstate ? "#fff" : "#555" }}>
+              <option value="">Choose estate...</option>
+              {estates.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+            </select>
+          </div>
+
+          {selEstate && (
+            <>
+              {/* Add single resident */}
+              <div style={a.card}>
+                <div style={a.section}>Add Single Resident</div>
+                <label style={a.label}>Email Address</label>
+                <input style={a.input} type="email" placeholder="resident@email.com"
+                  value={newRes.email} onChange={e => setNewRes(p => ({ ...p, email: e.target.value }))} />
+                <label style={a.label}>Unit Name</label>
+                <input style={a.input} placeholder="Block A, Flat 3"
+                  value={newRes.unit} onChange={e => setNewRes(p => ({ ...p, unit: e.target.value }))} />
+                <button style={a.btn} onClick={addResident}>Add Resident</button>
+              </div>
+
+              {/* Bulk add */}
+              <div style={a.card}>
+                <div style={a.section}>Bulk Add Residents</div>
+                <div style={{ fontSize:11, color:"#444", marginBottom:8 }}>
+                  Paste one resident per line: <span style={{ color:"#666" }}>email, unit name</span><br/>
+                  Example: john@gmail.com, Block A Flat 1
+                </div>
+                <textarea
+                  value={bulkText}
+                  onChange={e => setBulkText(e.target.value)}
+                  placeholder={"john@gmail.com, Block A Flat 1\njane@gmail.com, Block B Flat 3"}
+                  style={{ ...a.input, height:120, resize:"vertical", fontFamily:"monospace", fontSize:12 }}
+                />
+                {bulkMsg && <div style={{ ...a.msg, marginBottom:8 }}>{bulkMsg}</div>}
+                <button style={a.btn} onClick={handleBulkAdd}>Bulk Add</button>
+              </div>
+
+              {/* Resident list */}
+              <div style={a.card}>
+                <div style={a.section}>
+                  Approved Residents — {estates.find(e => e.id === selEstate)?.name} ({residents.length})
+                </div>
+                {residents.length === 0 ? <div style={{ color:"#333", fontSize:13 }}>No residents added yet.</div> :
+                  residents.map(r => (
+                    <div key={r.id} style={a.row}>
+                      <div>
+                        <div style={{ fontSize:13, color: r.used ? "#555" : "#e0e0e0" }}>{r.email}</div>
+                        <div style={{ fontSize:11, color:"#444" }}>{r.unit_name} &nbsp;&middot;&nbsp;
+                          <span style={{ color: r.used ? "#6bff6b" : "#888" }}>{r.used ? "Signed up" : "Pending"}</span>
+                        </div>
+                      </div>
+                      <div style={{ display:"flex", gap:6 }}>
+                        {r.used && (
+                          <button style={a.btnSm} onClick={async () => {
+                            await dbResetApprovedResident(r.email, selEstate);
+                            loadResidents(selEstate);
+                          }}>Reset</button>
+                        )}
+                        <button style={a.btnRed} onClick={async () => {
+                          await dbDeleteApprovedResident(r.id);
+                          loadResidents(selEstate);
+                        }}>Remove</button>
+                      </div>
+                    </div>
+                  ))
+                }
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* ── USERS TAB ── */}
+      {view === "users" && (
+        <div style={a.card}>
+          <div style={a.section}>All Signed Up Users ({users.length})</div>
+          {loading ? <div style={{ color:"#333", fontSize:13 }}>Loading...</div> :
+            users.length === 0 ? <div style={{ color:"#333", fontSize:13 }}>No users yet.</div> :
+            users.map(u => (
+              <div key={u.id} style={a.row}>
+                <div>
+                  <div style={{ fontSize:13, color:"#e0e0e0", fontWeight:600 }}>{u.name}</div>
+                  <div style={{ fontSize:11, color:"#444" }}>
+                    {u.email} &nbsp;&middot;&nbsp; {u.estate_id} &nbsp;&middot;&nbsp;
+                    {u.unit_name || "—"} &nbsp;&middot;&nbsp;
+                    <span style={{ color: u.role === "security" ? "#c8860a" : "#888" }}>{u.role}</span>
+                  </div>
+                </div>
+              </div>
+            ))
+          }
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Root ─────────────────────────────────────────────────────────────────────
+
+const ADMIN_PASSWORD = "rtglisunq58tghq59g8p8fhqb94wqb8p98qb3pfbdliweauksnc";
 
 export default function UpsidianApp() {
   const [user, setUser]           = useState(null);
   const [showReset, setShowReset] = useState(false);
   const [checking, setChecking]   = useState(true);
+  const [adminMode, setAdminMode] = useState(false);
+  const [logoTaps, setLogoTaps]   = useState(0);
   const logout      = () => setUser(null);
   const updateUser  = (updated) => setUser(updated);
 
   useEffect(() => {
-    // Check URL hash immediately on load — Supabase puts recovery tokens here
+    // Load estates from DB into the global ESTATES array on app start
+    dbGetEstates().then(estates => { ESTATES.length = 0; ESTATES.push(...estates); });
+
+    // Check URL hash for password recovery
     const hash = window.location.hash;
     if (hash.includes("type=recovery")) {
       setShowReset(true);
@@ -1726,18 +2088,33 @@ export default function UpsidianApp() {
       return;
     }
 
+    // Check URL for admin param — ?admin=true
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("admin") === "true") {
+      setAdminMode(true);
+    }
+
     setChecking(false);
 
-    // Also listen for the event firing after mount
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
-      if (event === "PASSWORD_RECOVERY") {
-        setShowReset(true);
-      }
+      if (event === "PASSWORD_RECOVERY") setShowReset(true);
     });
     return () => subscription.unsubscribe();
   }, []);
 
+  // Secret: tap the logo 7 times to open admin
+  const handleLogoTap = () => {
+    const next = logoTaps + 1;
+    setLogoTaps(next);
+    if (next >= 7) { setAdminMode(true); setLogoTaps(0); }
+    setTimeout(() => setLogoTaps(0), 3000);
+  };
+
   if (checking) return null;
+
+  if (adminMode) {
+    return <AdminPanel onExit={() => { setAdminMode(false); window.history.replaceState({}, "", window.location.pathname); }} />;
+  }
 
   if (showReset) {
     return (
@@ -1750,7 +2127,7 @@ export default function UpsidianApp() {
     );
   }
 
-  if (!user) return <AuthScreen onLogin={setUser} />;
+  if (!user) return <AuthScreen onLogin={setUser} onLogoTap={handleLogoTap} />;
   if (user.role === "security")
     return <SecurityAppWithProfile user={user} onLogout={logout} onUserUpdate={updateUser} />;
   return <ResidentApp user={user} onLogout={logout} onUserUpdate={updateUser} />;
