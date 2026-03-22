@@ -2886,6 +2886,10 @@ function AdminPanel({ onExit }) {
   const [serviceReqs, setServiceReqs]   = useState([]);
   const [notifEmail, setNotifEmail]     = useState("");
   const [notifSaved, setNotifSaved]     = useState(false);
+  const [pwChange, setPwChange]         = useState({ current:"", newPw:"", confirm:"" });
+  const [pwChangeErr, setPwChangeErr]   = useState("");
+  const [pwChangeOk, setPwChangeOk]     = useState("");
+  const [pwChangeOpen, setPwChangeOpen] = useState(false);
   const [loading, setLoading]     = useState(false);
   const [msg, setMsg]             = useState("");
 
@@ -2970,7 +2974,10 @@ function AdminPanel({ onExit }) {
   useEffect(() => { if (authed && selEstate) loadResidents(selEstate); }, [selEstate, authed]);
 
   const handleLogin = () => {
-    if (pwInput === ADMIN_PW) { setAuthed(true); setPwErr(""); }
+    // Check against saved password first, then fallback to hardcoded
+    const savedPw = await dbGetSetting("admin_password");
+    const correctPw = savedPw || ADMIN_PW;
+    if (pwInput === correctPw) { setAuthed(true); setPwErr(""); }
     else setPwErr("Incorrect password.");
   };
 
@@ -3096,6 +3103,7 @@ function AdminPanel({ onExit }) {
           { id:"users",     label:"Users" },
           { id:"services",  label: serviceReqs.filter(r => r.status === "pending").length > 0 ? "Services (" + serviceReqs.filter(r => r.status === "pending").length + ")" : "Services" },
           { id:"messages",  label: messages.filter(m => m.status === "open").length > 0 ? "Messages (" + messages.filter(m => m.status === "open").length + ")" : "Messages" },
+          { id:"settings",  label: "Settings" },
         ].map(t => (
           <button key={t.id} style={a.tab(view === t.id)} onClick={() => setView(t.id)}>
             {t.label}
@@ -3276,29 +3284,6 @@ function AdminPanel({ onExit }) {
       {/* ── SERVICES TAB ── */}
       {view === "services" && (
         <div>
-          {/* Notification email setting */}
-          <div style={a.card}>
-            <div style={a.section}>Notification Email</div>
-            <div style={{ fontSize:12, color:"#555", marginBottom:10 }}>
-              Every new service request will trigger an email to this address.
-            </div>
-            <div style={{ display:"flex", gap:8 }}>
-              <input
-                value={notifEmail}
-                onChange={e => { setNotifEmail(e.target.value); setNotifSaved(false); }}
-                placeholder="e.g. services@youremail.com"
-                style={{ ...a.input, marginBottom:0, flex:1 }}
-              />
-              <button style={a.btn} onClick={async () => {
-                await dbSetSetting("service_notification_email", notifEmail.trim());
-                setNotifSaved(true);
-                setTimeout(() => setNotifSaved(false), 2500);
-              }}>
-                {notifSaved ? "Saved ✓" : "Save"}
-              </button>
-            </div>
-          </div>
-
           {/* Service requests list */}
           <div style={a.card}>
             <div style={a.section}>
@@ -3519,6 +3504,93 @@ function AdminPanel({ onExit }) {
           </div>
         </div>
       )}
+
+      {/* ── SETTINGS TAB ── */}
+      {view === "settings" && (
+        <div>
+
+          {/* Notification email */}
+          <div style={a.card}>
+            <div style={a.section}>Service Notifications</div>
+            <div style={{ fontSize:12, color:"#666", marginBottom:10 }}>
+              Set an email to receive notifications for new service requests.
+            </div>
+            <div style={{ display:"flex", gap:8 }}>
+              <input
+                value={notifEmail}
+                onChange={e => { setNotifEmail(e.target.value); setNotifSaved(false); }}
+                placeholder="e.g. services@youremail.com"
+                style={{ ...a.input, marginBottom:0, flex:1 }}
+              />
+              <button style={a.btn} onClick={async () => {
+                await dbSetSetting("service_notification_email", notifEmail.trim());
+                setNotifSaved(true);
+                setTimeout(() => setNotifSaved(false), 2500);
+              }}>
+                {notifSaved ? "Saved ✓" : "Save"}
+              </button>
+            </div>
+          </div>
+
+          {/* Change Admin Password */}
+          <div style={a.card}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+              <div style={a.section}>Admin Password</div>
+              <button
+                onClick={() => { setPwChangeOpen(v => !v); setPwChangeErr(""); setPwChangeOk(""); setPwChange({ current:"", newPw:"", confirm:"" }); }}
+                style={a.btnSm}
+              >
+                {pwChangeOpen ? "Cancel" : "Change Password"}
+              </button>
+            </div>
+            {!pwChangeOpen && (
+              <div style={{ fontSize:12, color:"#555", marginTop:6 }}>
+                Update the password used to access this admin panel.
+              </div>
+            )}
+            {pwChangeOpen && (
+              <div style={{ marginTop:16 }}>
+                {pwChangeErr && <div style={a.err}>{pwChangeErr}</div>}
+                {pwChangeOk  && <div style={a.msg}>{pwChangeOk}</div>}
+                <label style={a.label}>Current Password</label>
+                <input type="password" value={pwChange.current}
+                  onChange={e => setPwChange(p => ({ ...p, current: e.target.value }))}
+                  placeholder="Your current admin password" style={a.input} />
+                <label style={a.label}>New Password</label>
+                <input type="password" value={pwChange.newPw}
+                  onChange={e => setPwChange(p => ({ ...p, newPw: e.target.value }))}
+                  placeholder="Minimum 8 characters" style={a.input} />
+                <label style={a.label}>Confirm New Password</label>
+                <input type="password" value={pwChange.confirm}
+                  onChange={e => setPwChange(p => ({ ...p, confirm: e.target.value }))}
+                  placeholder="Repeat new password" style={{ ...a.input, marginBottom:16 }} />
+                <button style={a.btn} onClick={async () => {
+                  setPwChangeErr(""); setPwChangeOk("");
+                  if (!pwChange.current || !pwChange.newPw || !pwChange.confirm)
+                    return setPwChangeErr("All fields are required.");
+                  const savedPw2 = await dbGetSetting("admin_password");
+                  const correctPw2 = savedPw2 || ADMIN_PW;
+                  if (pwChange.current !== correctPw2)
+                    return setPwChangeErr("Current password is incorrect.");
+                  if (pwChange.newPw.length < 8)
+                    return setPwChangeErr("New password must be at least 8 characters.");
+                  if (pwChange.newPw !== pwChange.confirm)
+                    return setPwChangeErr("Passwords do not match.");
+                  const ok = await dbSetSetting("admin_password", pwChange.newPw);
+                  if (!ok) return setPwChangeErr("Failed to save. Please try again.");
+                  setPwChangeOk("Password updated successfully.");
+                  setPwChange({ current:"", newPw:"", confirm:"" });
+                  setPwChangeOpen(false);
+                }}>
+                  Update Password
+                </button>
+              </div>
+            )}
+          </div>
+
+        </div>
+      )}
+
     </div>
   );
 }
