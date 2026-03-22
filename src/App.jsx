@@ -260,6 +260,29 @@ async function dbDeleteInvite(inviteId) {
   return true;
 }
 
+// SERVICE REQUESTS
+async function dbCreateServiceRequest(req) {
+  const { error } = await supabase.from("service_requests").insert({
+    resident_email: req.residentEmail,
+    resident_name: req.residentName,
+    estate_id: req.estateId,
+    unit_name: req.unitName,
+    service_type: req.serviceType,
+    date: req.date,
+    time: req.time,
+    notes: req.notes || null,
+    status: "pending",
+  });
+  if (error) { console.error("dbCreateServiceRequest:", error); return false; }
+  return true;
+}
+async function dbGetServiceRequests(residentEmail) {
+  const { data, error } = await supabase.from("service_requests").select("*")
+    .eq("resident_email", residentEmail).order("created_at", { ascending: false });
+  if (error) { console.error("dbGetServiceRequests:", error); return []; }
+  return data || [];
+}
+
 // STAFF
 async function dbGetStaff(residentEmail) {
   const { data, error } = await supabase.from("staff").select("*").eq("resident_email", residentEmail).order("created_at");
@@ -1318,7 +1341,7 @@ function ResidentApp({ user, onLogout, onUserUpdate }) {
   const navItems = [
     { id:"dashboard", label:"Home",    icon:"⌂" },
     { id:"invite",    label:"Invite",  icon:"✉" },
-    { id:"profile",   label:"Profile", icon:"◯" },
+    { id:"hub",       label:"Hub",     icon:"⊞" },
   ];
 
   return (
@@ -1573,9 +1596,9 @@ function ResidentApp({ user, onLogout, onUserUpdate }) {
           </div>
         )}
 
-        {/* PROFILE */}
-        {view === "profile" && (
-          <ProfileView user={user} onUserUpdate={onUserUpdate} onLogout={onLogout} />
+        {/* HUB */}
+        {view === "hub" && (
+          <HubView user={user} onUserUpdate={onUserUpdate} onLogout={onLogout} />
         )}
 
       </div>
@@ -1685,12 +1708,12 @@ function ResidentApp({ user, onLogout, onUserUpdate }) {
           </button>
         </div>
 
-        {/* Profile */}
-        <button onClick={() => setView("profile")} style={c.navBtn(view === "profile")}>
-          <svg width="22" height="22" viewBox="0 0 24 24" fill={view === "profile" ? "#fff" : "#555"}>
-            <path d="M12 12c2.7 0 4.8-2.1 4.8-4.8S14.7 2.4 12 2.4 7.2 4.5 7.2 7.2 9.3 12 12 12zm0 2.4c-3.2 0-9.6 1.6-9.6 4.8v2.4h19.2v-2.4c0-3.2-6.4-4.8-9.6-4.8z"/>
+        {/* Hub */}
+        <button onClick={() => setView("hub")} style={c.navBtn(view === "hub")}>
+          <svg width="22" height="22" viewBox="0 0 24 24" fill={view === "hub" ? "#fff" : "#555"}>
+            <path d="M3 3h8v8H3zm10 0h8v8h-8zM3 13h8v8H3zm10 0h8v8h-8z"/>
           </svg>
-          Profile
+          Hub
         </button>
       </div>
     </div>
@@ -1698,12 +1721,246 @@ function ResidentApp({ user, onLogout, onUserUpdate }) {
 }
 
 
+
+// ─── Hub View (residents only — replaces Profile tab) ────────────────────────
+
+function HubView({ user, onUserUpdate, onLogout }) {
+  const [hubTab, setHubTab] = useState("profile"); // profile | services
+
+  return (
+    <div>
+      <div style={{ fontWeight:700, fontSize:17, marginBottom:4 }}>Hub</div>
+      <div style={{ color:"#888", fontSize:13, marginBottom:16 }}>Your profile, services and account settings.</div>
+
+      {/* Sub-tabs */}
+      <div style={{ display:"flex", gap:8, marginBottom:20 }}>
+        {[
+          { id:"profile",  label:"My Profile" },
+          { id:"services", label:"Services" },
+        ].map(t => (
+          <button key={t.id}
+            onClick={() => setHubTab(t.id)}
+            style={{
+              flex:1, padding:"10px 0", borderRadius:10, fontSize:13, fontWeight:600, cursor:"pointer",
+              background: hubTab === t.id ? "#fff" : "#1a1a1a",
+              color: hubTab === t.id ? "#000" : "#555",
+              border: hubTab === t.id ? "none" : "1px solid #2a2a2a",
+            }}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {hubTab === "profile" && (
+        <ProfileView user={user} onUserUpdate={onUserUpdate} onLogout={onLogout} />
+      )}
+
+      {hubTab === "services" && (
+        <ServicesView user={user} />
+      )}
+    </div>
+  );
+}
+
+// ─── Services View ────────────────────────────────────────────────────────────
+
+function ServicesView({ user }) {
+  const [requests, setRequests]   = useState([]);
+  const [loading, setLoading]     = useState(true);
+  const [formOpen, setFormOpen]   = useState(false);
+  const [saving, setSaving]       = useState(false);
+  const [success, setSuccess]     = useState("");
+  const [err, setErr]             = useState("");
+
+  const today = nowNigeria();
+  const todayStr = today.getFullYear() + "-" +
+    String(today.getMonth()+1).padStart(2,"0") + "-" +
+    String(today.getDate()).padStart(2,"0");
+
+  const [form, setForm] = useState({
+    service: "",
+    date: todayStr,
+    hour: String(today.getHours()).padStart(2,"0"),
+    min: String(today.getMinutes()).padStart(2,"0"),
+    notes: "",
+  });
+
+  const services = [
+    { id:"haircut", label:"Haircut", desc:"A barber comes to your flat", icon:"✂️" },
+  ];
+
+  useEffect(() => {
+    dbGetServiceRequests(user.email).then(data => {
+      setRequests(data);
+      setLoading(false);
+    });
+  }, []);
+
+  const handleSubmit = async () => {
+    setErr("");
+    if (!form.service) return setErr("Please select a service.");
+    if (!form.date) return setErr("Please select a date.");
+    setSaving(true);
+    const ok = await dbCreateServiceRequest({
+      residentEmail: user.email,
+      residentName: user.name,
+      estateId: user.estateId,
+      unitName: user.unitName || "—",
+      serviceType: form.service,
+      date: form.date,
+      time: form.hour + ":" + form.min,
+      notes: form.notes,
+    });
+    if (!ok) { setSaving(false); return setErr("Failed to submit. Please try again."); }
+    const updated = await dbGetServiceRequests(user.email);
+    setRequests(updated);
+    setSuccess("Request submitted! You will be contacted to confirm.");
+    setFormOpen(false);
+    setSaving(false);
+    setForm({ service:"", date:todayStr, hour:String(today.getHours()).padStart(2,"0"), min:String(today.getMinutes()).padStart(2,"0"), notes:"" });
+  };
+
+  const statusColor = (s) => s === "confirmed" ? "#6bff6b" : s === "cancelled" ? "#ff6b6b" : "#c8860a";
+
+  return (
+    <div>
+      {success && (
+        <div style={{ background:"#0a1e0a", border:"1px solid #1a3d1a", borderRadius:10, padding:"12px 14px", color:"#6bff6b", fontSize:13, marginBottom:16 }}>
+          {success}
+        </div>
+      )}
+
+      {/* Request a Service card */}
+      <div style={{ background:"#141414", border:"1px solid #1e1e1e", borderRadius:14, padding:20, marginBottom:16 }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+          <div style={{ fontSize:11, fontWeight:700, color:"#888", letterSpacing:2, textTransform:"uppercase" }}>Request a Service</div>
+          <button
+            onClick={() => { setFormOpen(v => !v); setErr(""); setSuccess(""); }}
+            style={{ background:"none", border:"1px solid #2a2a2a", color:"#555", borderRadius:6, padding:"4px 10px", fontSize:11, cursor:"pointer" }}
+          >
+            {formOpen ? "Cancel" : "+ New Request"}
+          </button>
+        </div>
+
+        {!formOpen && (
+          <div style={{ fontSize:12, color:"#555", marginTop:8, lineHeight:1.6 }}>
+            Book a service and a professional will come to your flat. More services coming soon.
+          </div>
+        )}
+
+        {formOpen && (
+          <div style={{ marginTop:16 }}>
+            {err && <div style={{ background:"#1e0a0a", border:"1px solid #3d1515", borderRadius:8, padding:"10px 14px", color:"#ff6b6b", fontSize:12, marginBottom:12 }}>{err}</div>}
+
+            {/* Service selector */}
+            <label style={{ fontSize:10, fontWeight:600, color:"#888", letterSpacing:1.5, textTransform:"uppercase", display:"block", marginBottom:8 }}>Select Service</label>
+            {services.map(svc => (
+              <button key={svc.id}
+                onClick={() => setForm(p => ({ ...p, service: svc.id }))}
+                style={{
+                  width:"100%", display:"flex", alignItems:"center", gap:12, padding:"12px 14px",
+                  background: form.service === svc.id ? "#fff" : "#1a1a1a",
+                  border: form.service === svc.id ? "none" : "1px solid #2a2a2a",
+                  borderRadius:10, cursor:"pointer", marginBottom:10, textAlign:"left",
+                }}
+              >
+                <span style={{ fontSize:22 }}>{svc.icon}</span>
+                <div>
+                  <div style={{ fontWeight:700, fontSize:13, color: form.service === svc.id ? "#000" : "#fff" }}>{svc.label}</div>
+                  <div style={{ fontSize:11, color: form.service === svc.id ? "#555" : "#555", marginTop:1 }}>{svc.desc}</div>
+                </div>
+              </button>
+            ))}
+
+            {/* Date */}
+            <label style={{ fontSize:10, fontWeight:600, color:"#888", letterSpacing:1.5, textTransform:"uppercase", display:"block", marginBottom:6, marginTop:4 }}>Preferred Date</label>
+            <input
+              type="date"
+              min={todayStr}
+              value={form.date}
+              onChange={e => setForm(p => ({ ...p, date: e.target.value }))}
+              style={{ width:"100%", padding:"12px 14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontSize:16, color:"#fff", boxSizing:"border-box", outline:"none", marginBottom:12, colorScheme:"dark" }}
+            />
+
+            {/* Time */}
+            <label style={{ fontSize:10, fontWeight:600, color:"#888", letterSpacing:1.5, textTransform:"uppercase", display:"block", marginBottom:6 }}>Preferred Time</label>
+            <div style={{ display:"flex", gap:8, marginBottom:12, alignItems:"center" }}>
+              <select value={form.hour} onChange={e => setForm(p => ({ ...p, hour: e.target.value }))}
+                style={{ flex:1, padding:"12px 8px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontSize:14, color:"#fff" }}>
+                {Array.from({length:24},(_,i) => {
+                  const h = String(i).padStart(2,"0");
+                  return <option key={h} value={h}>{h}</option>;
+                })}
+              </select>
+              <span style={{ color:"#444", fontSize:18, fontWeight:700 }}>:</span>
+              <select value={form.min} onChange={e => setForm(p => ({ ...p, min: e.target.value }))}
+                style={{ flex:1, padding:"12px 8px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontSize:14, color:"#fff" }}>
+                {Array.from({length:60},(_,i) => {
+                  const m = String(i).padStart(2,"0");
+                  return <option key={m} value={m}>{m}</option>;
+                })}
+              </select>
+            </div>
+
+            {/* Notes */}
+            <label style={{ fontSize:10, fontWeight:600, color:"#888", letterSpacing:1.5, textTransform:"uppercase", display:"block", marginBottom:6 }}>Additional Notes (optional)</label>
+            <textarea
+              value={form.notes}
+              onChange={e => setForm(p => ({ ...p, notes: e.target.value }))}
+              placeholder="e.g. low fade, please bring your own scissors..."
+              maxLength={300}
+              style={{ width:"100%", padding:"12px 14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontSize:14, color:"#fff", boxSizing:"border-box", outline:"none", resize:"none", height:80, fontFamily:"inherit", marginBottom:16 }}
+            />
+
+            <button
+              style={{ width:"100%", background:"#fff", color:"#000", border:"none", padding:14, borderRadius:10, fontSize:14, fontWeight:700, cursor:"pointer" }}
+              onClick={handleSubmit}
+              disabled={saving}
+            >
+              {saving ? "Submitting..." : "Submit Request"}
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Past requests */}
+      <div style={{ fontSize:11, fontWeight:700, color:"#888", letterSpacing:2, textTransform:"uppercase", marginBottom:10 }}>
+        Your Requests ({requests.length})
+      </div>
+      {loading ? (
+        <div style={{ color:"#333", fontSize:13 }}>Loading...</div>
+      ) : requests.length === 0 ? (
+        <div style={{ color:"#333", fontSize:13 }}>No service requests yet.</div>
+      ) : (
+        requests.map(r => (
+          <div key={r.id} style={{ background:"#141414", border:"1px solid #1e1e1e", borderRadius:12, padding:14, marginBottom:10 }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 }}>
+              <div style={{ fontWeight:700, fontSize:14, color:"#fff", textTransform:"capitalize" }}>
+                {r.service_type === "haircut" ? "✂️ Haircut" : r.service_type}
+              </div>
+              <span style={{ fontSize:10, fontWeight:700, padding:"3px 10px", borderRadius:20, border:"1px solid", color:statusColor(r.status), borderColor:statusColor(r.status), background:"transparent" }}>
+                {r.status.toUpperCase()}
+              </span>
+            </div>
+            <div style={{ fontSize:12, color:"#555" }}>
+              {new Date(r.date).toLocaleDateString("en-NG", { day:"numeric", month:"short", year:"numeric" })} at {r.time} WAT
+            </div>
+            {r.notes && <div style={{ fontSize:12, color:"#444", marginTop:4 }}>{r.notes}</div>}
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
+
 // ─── Staff Section Component ──────────────────────────────────────────────────
 
 function StaffSection({ user }) {
   const MAX_STAFF = 4;
   const [staff, setStaff]         = useState([]);
   const [open, setOpen]           = useState(false);
+  const [listOpen, setListOpen]   = useState(true);
   const [loading, setLoading]     = useState(true);
   const [saving, setSaving]       = useState(false);
   const [err, setErr]             = useState("");
@@ -1778,8 +2035,18 @@ function StaffSection({ user }) {
   return (
     <div style={{ background:"#141414", border:"1px solid #1e1e1e", borderRadius:14, padding:20, marginBottom:16 }}>
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-        <div style={{ fontSize:11, fontWeight:700, color:"#888", letterSpacing:2, textTransform:"uppercase" }}>
-          My Staff ({staff.length}/{MAX_STAFF})
+        <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+          <div style={{ fontSize:11, fontWeight:700, color:"#888", letterSpacing:2, textTransform:"uppercase" }}>
+            My Staff ({staff.length}/{MAX_STAFF})
+          </div>
+          {staff.length > 0 && (
+            <button
+              onClick={() => setListOpen(v => !v)}
+              style={{ background:"#1a1a1a", border:"1px solid #2a2a2a", color:"#888", borderRadius:"50%", width:22, height:22, display:"flex", alignItems:"center", justifyContent:"center", cursor:"pointer", fontSize:14, fontWeight:700, flexShrink:0 }}
+            >
+              {listOpen ? "−" : "+"}
+            </button>
+          )}
         </div>
         {staff.length < MAX_STAFF && (
           <button
@@ -1843,7 +2110,7 @@ function StaffSection({ user }) {
       {/* Staff list */}
       {loading ? (
         <div style={{ color:"#333", fontSize:13, marginTop:12 }}>Loading...</div>
-      ) : staff.length === 0 && !open ? (
+      ) : !listOpen ? null : staff.length === 0 && !open ? (
         <div style={{ fontSize:12, color:"#555", marginTop:10, lineHeight:1.6 }}>
           Add domestic staff (cleaner, driver, nanny, etc.) so they can access the estate with a permanent code. You can turn their access on or off at any time.
         </div>
