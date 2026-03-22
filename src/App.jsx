@@ -1125,6 +1125,7 @@ function ResidentApp({ user, onLogout, onUserUpdate }) {
   const [inviteErr, setInviteErr]       = useState("");
   const [codeModal, setCodeModal] = useState(null); // popup for newly created invite
   const [codesVisible, setCodesVisible] = useState(true); // toggle all codes on dashboard
+  const [dashFilter, setDashFilter]     = useState(null);  // null | "active" | "upcoming" | "used"
 
   const loadInvites = useCallback(async () => {
     const data = await dbGetInvites(user.estateId);
@@ -1389,74 +1390,149 @@ function ResidentApp({ user, onLogout, onUserUpdate }) {
       <div style={c.content}>
 
         {/* DASHBOARD */}
-        {view === "dashboard" && (
-          <div>
-            <p style={c.greet}>Good day, <strong style={{ color:"#fff" }}>{user.name}</strong></p>
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:20 }}>
-              {[
-                { label:"Active Invites",   value: myInvites.filter((i) => i.status === "pending" && isInviteValid(i)).length },
-                { label:"Total Invites",    value: myInvites.length },
-                { label:"Upcoming",         value: myInvites.filter((i) => i.status === "pending" && nowNigeria() < parseNigeriaDateTime(i.date, i.timeFrom)).length },
-                { label:"Used",             value: myInvites.filter((i) => i.status === "used").length },
-              ].map((s) => (
-                <div key={s.label} style={c.statCard}>
-                  <div style={{ fontSize:28, fontWeight:800, color:"#fff" }}>{s.value}</div>
-                  <div style={{ fontSize:11, color:"#444", marginTop:2, letterSpacing:0.5 }}>{s.label}</div>
-                </div>
-              ))}
-            </div>
+        {view === "dashboard" && (() => {
+          // Computed invite buckets
+          const activeInvites   = myInvites.filter(i => i.status === "pending" && isInviteValid(i));
+          const upcomingInvites = myInvites.filter(i => i.status === "pending" && nowNigeria() < parseNigeriaDateTime(i.date, i.timeFrom));
+          const usedInvites     = myInvites.filter(i => i.status === "used");
 
-            <div style={{ marginTop:20 }}>
-              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
-                <div style={c.section}>Your Recent Invites</div>
-                {myInvites.length > 0 && (
-                  <button
-                    onClick={() => setCodesVisible(v => !v)}
-                    style={{ background:"none", border:"1px solid #2a2a2a", color:"#555", borderRadius:6, padding:"4px 10px", fontSize:11, cursor:"pointer", letterSpacing:0.5 }}
-                  >
-                    {codesVisible ? "Hide" : "Show"}
-                  </button>
-                )}
-              </div>
-              {loadingInvites ? (
-                <div style={{ color:"#2a2a2a", fontSize:13 }}>Loading...</div>
-              ) : myInvites.length === 0 ? (
-                <div style={{ background:"#141414", border:"1px solid #1e1e1e", borderRadius:14, padding:"20px 16px", textAlign:"center" }}>
-                  <div style={{ fontSize:28, marginBottom:10 }}>&#x2709;</div>
-                  <div style={{ fontWeight:700, color:"#e0e0e0", fontSize:14, marginBottom:6 }}>No invites yet</div>
-                  <div style={{ fontSize:12, color:"#444", marginBottom:16, lineHeight:1.6 }}>Create a guest invite to give your visitor a secure one-time code to enter the estate.</div>
-                  <button
-                    onClick={() => setView("invite")}
-                    style={{ background:"#fff", color:"#000", border:"none", borderRadius:8, padding:"9px 20px", fontSize:12, fontWeight:700, cursor:"pointer", letterSpacing:0.5 }}
-                  >
-                    Create First Invite
-                  </button>
-                </div>
-              ) : codesVisible ? (
-                <>
-                  {myInvites.filter((i) => !hiddenIds.includes(i.id)).slice(0, 3).map((inv) => <InviteCard key={inv.id} inv={inv} />)}
-                  {myInvites.filter((i) => !hiddenIds.includes(i.id)).length > 3 && (
+          // Which invites to show based on filter
+          const filteredInvites = dashFilter === "active"   ? activeInvites
+                                : dashFilter === "upcoming" ? upcomingInvites
+                                : dashFilter === "used"     ? usedInvites
+                                : myInvites.filter(i => !hiddenIds.includes(i.id));
+
+          const stats = [
+            {
+              label: "Active",
+              value: activeInvites.length,
+              filter: "active",
+              numColor: "22C55E",
+              activeBg: "#0a1e0a",
+              activeBorder: "#1a3d1a",
+            },
+            {
+              label: "Total",
+              value: myInvites.length,
+              filter: null,
+              numColor: "FFFFFF",
+              activeBg: "#1a1a1a",
+              activeBorder: "#2a2a2a",
+            },
+            {
+              label: "Upcoming",
+              value: upcomingInvites.length,
+              filter: "upcoming",
+              numColor: "F59E0B",
+              activeBg: "#1a150a",
+              activeBorder: "#3d2e10",
+            },
+            {
+              label: "Used",
+              value: usedInvites.length,
+              filter: "used",
+              numColor: "EF4444",
+              activeBg: "#1a0a0a",
+              activeBorder: "#3d1515",
+            },
+          ];
+
+          const sectionLabel = dashFilter === "active"   ? "Active Invites"
+                             : dashFilter === "upcoming" ? "Upcoming Invites"
+                             : dashFilter === "used"     ? "Used Invites"
+                             : "Your Recent Invites";
+
+          return (
+            <div>
+              <p style={c.greet}>Good day, <strong style={{ color:"#fff" }}>{user.name}</strong></p>
+
+              {/* Stat cards — coloured + clickable */}
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:20 }}>
+                {stats.map(s => {
+                  const isActive = dashFilter === s.filter;
+                  return (
                     <button
-                      onClick={() => setView("invite")}
-                      style={{ width:"100%", background:"none", border:"1px solid #1e1e1e", color:"#555", borderRadius:10, padding:"10px 0", fontSize:12, cursor:"pointer", letterSpacing:0.5, marginTop:4 }}
+                      key={s.label}
+                      onClick={() => setDashFilter(isActive ? null : s.filter)}
+                      style={{
+                        background: isActive ? s.activeBg : "#141414",
+                        border: "1px solid " + (isActive ? s.activeBorder : "#1e1e1e"),
+                        borderRadius:12, padding:16, textAlign:"left", cursor:"pointer",
+                        transition:"all 0.15s",
+                      }}
                     >
-                      View all {myInvites.filter((i) => !hiddenIds.includes(i.id)).length} invites &rarr;
+                      <div style={{ fontSize:28, fontWeight:800, color:"#" + s.numColor }}>{s.value}</div>
+                      <div style={{ fontSize:11, color: isActive ? "#" + s.numColor : "#555", marginTop:2, letterSpacing:0.5 }}>{s.label}</div>
                     </button>
-                  )}
-                </>
-              ) : (
-                <div style={{ background:"#141414", border:"1px solid #1e1e1e", borderRadius:10, padding:"12px 14px", textAlign:"center" }}>
-                  <div style={{ fontSize:12, color:"#333" }}>
-                    {myInvites.length} invite{myInvites.length !== 1 ? "s" : ""} hidden &middot;{" "}
-                    <button onClick={() => setCodesVisible(true)} style={{ background:"none", border:"none", color:"#555", fontSize:12, cursor:"pointer", textDecoration:"underline", padding:0 }}>
-                      Show
-                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Active filter pill */}
+              {dashFilter && (
+                <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:10 }}>
+                  <div style={{ fontSize:11, color:"#555" }}>Showing:</div>
+                  <div style={{ background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:20, padding:"3px 10px", fontSize:11, color:"#888" }}>
+                    {sectionLabel}
                   </div>
+                  <button onClick={() => setDashFilter(null)} style={{ background:"none", border:"none", color:"#444", fontSize:11, cursor:"pointer", textDecoration:"underline" }}>
+                    Clear
+                  </button>
                 </div>
               )}
+
+              <div>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
+                  <div style={c.section}>{sectionLabel}</div>
+                  {myInvites.length > 0 && !dashFilter && (
+                    <button
+                      onClick={() => setCodesVisible(v => !v)}
+                      style={{ background:"none", border:"1px solid #2a2a2a", color:"#555", borderRadius:6, padding:"4px 10px", fontSize:11, cursor:"pointer", letterSpacing:0.5 }}
+                    >
+                      {codesVisible ? "Hide" : "Show"}
+                    </button>
+                  )}
+                </div>
+
+                {loadingInvites ? (
+                  <div style={{ color:"#2a2a2a", fontSize:13 }}>Loading...</div>
+                ) : myInvites.length === 0 ? (
+                  <div style={{ background:"#141414", border:"1px solid #1e1e1e", borderRadius:14, padding:"20px 16px", textAlign:"center" }}>
+                    <div style={{ fontSize:28, marginBottom:10 }}>&#x2709;</div>
+                    <div style={{ fontWeight:700, color:"#e0e0e0", fontSize:14, marginBottom:6 }}>No invites yet</div>
+                    <div style={{ fontSize:12, color:"#444", marginBottom:16, lineHeight:1.6 }}>Create a guest invite to give your visitor a secure one-time code to enter the estate.</div>
+                    <button onClick={() => setView("invite")} style={{ background:"#fff", color:"#000", border:"none", borderRadius:8, padding:"9px 20px", fontSize:12, fontWeight:700, cursor:"pointer", letterSpacing:0.5 }}>
+                      Create First Invite
+                    </button>
+                  </div>
+                ) : !codesVisible && !dashFilter ? (
+                  <div style={{ background:"#141414", border:"1px solid #1e1e1e", borderRadius:10, padding:"12px 14px", textAlign:"center" }}>
+                    <div style={{ fontSize:12, color:"#333" }}>
+                      {myInvites.length} invite{myInvites.length !== 1 ? "s" : ""} hidden &middot;{" "}
+                      <button onClick={() => setCodesVisible(true)} style={{ background:"none", border:"none", color:"#555", fontSize:12, cursor:"pointer", textDecoration:"underline", padding:0 }}>Show</button>
+                    </div>
+                  </div>
+                ) : filteredInvites.length === 0 ? (
+                  <div style={{ color:"#333", fontSize:13, padding:"12px 0" }}>
+                    No {sectionLabel.toLowerCase()} to show.
+                  </div>
+                ) : (
+                  <>
+                    {(dashFilter ? filteredInvites : filteredInvites.slice(0, 3)).map(inv => <InviteCard key={inv.id} inv={inv} />)}
+                    {!dashFilter && filteredInvites.length > 3 && (
+                      <button
+                        onClick={() => setView("invite")}
+                        style={{ width:"100%", background:"none", border:"1px solid #1e1e1e", color:"#555", borderRadius:10, padding:"10px 0", fontSize:12, cursor:"pointer", letterSpacing:0.5, marginTop:4 }}
+                      >
+                        View all {filteredInvites.length} invites &rarr;
+                      </button>
+                    )}
+                  </>
+                )}
+              </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {/* INVITE */}
         {view === "invite" && (
@@ -1824,6 +1900,11 @@ function ServicesView({ user }) {
       setRequests(data);
       setLoading(false);
     });
+    // Poll every 30s so status changes (confirmed/cancelled) show without refresh
+    const interval = setInterval(() => {
+      dbGetServiceRequests(user.email).then(data => setRequests(data));
+    }, 30000);
+    return () => clearInterval(interval);
   }, []);
 
   const handleSubmit = async () => {
@@ -1843,24 +1924,28 @@ function ServicesView({ user }) {
     });
     if (!ok) { setSaving(false); return setErr("Failed to submit. Please try again."); }
 
-    // Send email notification via mailto (opens email app) if notification email is set
+    // Send email notification via Supabase Edge Function + Resend
     const notifEmail = await dbGetSetting("service_notification_email");
     if (notifEmail) {
       const serviceName = form.service === "haircut" ? "Haircut" : form.service;
       const estate = ESTATES.find(e => e.id === user.estateId);
-      const subject = encodeURIComponent("New Service Request — " + serviceName);
-      const body = encodeURIComponent(
-        "New service request received on Upsidian.\n\n" +
-        "Service: " + serviceName + "\n" +
-        "Resident: " + user.name + " (" + user.email + ")\n" +
-        "Unit: " + (user.unitName || "-") + "\n" +
-        "Estate: " + (estate ? estate.name : user.estateId) + "\n" +
-        "Date: " + form.date + "\n" +
-        "Time: " + form.hour + ":" + form.min + " WAT\n" +
-        (form.notes ? "Notes: " + form.notes + "\n" : "") +
-        "\nLog in to the admin panel to manage this request."
-      );
-      window.open("mailto:" + notifEmail + "?subject=" + subject + "&body=" + body);
+      try {
+        await supabase.functions.invoke("send-service-email", {
+          body: {
+            to: notifEmail,
+            service: serviceName,
+            residentName: user.name,
+            residentEmail: user.email,
+            unitName: user.unitName || "—",
+            estateName: estate ? estate.name : user.estateId,
+            date: form.date,
+            time: form.hour + ":" + form.min,
+            notes: form.notes || "",
+          },
+        });
+      } catch (e) {
+        console.warn("Email notification failed:", e);
+      }
     }
 
     const updated = await dbGetServiceRequests(user.email);
@@ -2010,6 +2095,16 @@ function ServicesView({ user }) {
               {new Date(r.date + "T00:00:00").toLocaleDateString("en-NG", { day:"numeric", month:"short", year:"numeric" })} at {r.time} WAT
             </div>
             {r.notes && <div style={{ fontSize:12, color:"#444", marginTop:4 }}>{r.notes}</div>}
+            {r.status === "confirmed" && (
+              <div style={{ background:"#0a1e0a", border:"1px solid #1a3d1a", borderRadius:8, padding:"8px 12px", marginTop:8, fontSize:12, color:"#6bff6b" }}>
+                ✓ Confirmed! Someone will be in touch with you shortly to arrange the visit.
+              </div>
+            )}
+            {r.status === "cancelled" && (
+              <div style={{ background:"#1e0a0a", border:"1px solid #3d1515", borderRadius:8, padding:"8px 12px", marginTop:8, fontSize:12, color:"#ff6b6b" }}>
+                This request was cancelled. Please submit a new request or contact your estate manager.
+              </div>
+            )}
           </div>
         ))
       )}
