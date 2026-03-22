@@ -2973,7 +2973,7 @@ function AdminPanel({ onExit }) {
   useEffect(() => { if (authed) load(); }, [authed]);
   useEffect(() => { if (authed && selEstate) loadResidents(selEstate); }, [selEstate, authed]);
 
-  const handleLogin = () => {
+  const handleLogin = async () => {
     // Check against saved password first, then fallback to hardcoded
     const savedPw = await dbGetSetting("admin_password");
     const correctPw = savedPw || ADMIN_PW;
