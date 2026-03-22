@@ -261,6 +261,18 @@ async function dbDeleteInvite(inviteId) {
 }
 
 // SERVICE REQUESTS
+// Settings (notification email etc)
+async function dbGetSetting(key) {
+  const { data, error } = await supabase.from("settings").select("value").eq("key", key).single();
+  if (error || !data) return null;
+  return data.value;
+}
+async function dbSetSetting(key, value) {
+  const { error } = await supabase.from("settings").upsert({ key, value }, { onConflict: "key" });
+  if (error) { console.error("dbSetSetting:", error); return false; }
+  return true;
+}
+
 async function dbCreateServiceRequest(req) {
   const { error } = await supabase.from("service_requests").insert({
     resident_email: req.residentEmail,
@@ -281,6 +293,23 @@ async function dbGetServiceRequests(residentEmail) {
     .eq("resident_email", residentEmail).order("created_at", { ascending: false });
   if (error) { console.error("dbGetServiceRequests:", error); return []; }
   return data || [];
+}
+
+async function dbGetAllServiceRequests() {
+  const { data, error } = await supabase.from("service_requests").select("*")
+    .order("created_at", { ascending: false });
+  if (error) { console.error("dbGetAllServiceRequests:", error); return []; }
+  return data || [];
+}
+async function dbUpdateServiceStatus(id, status) {
+  const { error } = await supabase.from("service_requests").update({ status }).eq("id", id);
+  if (error) { console.error("dbUpdateServiceStatus:", error); return false; }
+  return true;
+}
+async function dbDeleteServiceRequest(id) {
+  const { error } = await supabase.from("service_requests").delete().eq("id", id);
+  if (error) { console.error("dbDeleteServiceRequest:", error); return false; }
+  return true;
 }
 
 // STAFF
@@ -1813,12 +1842,38 @@ function ServicesView({ user }) {
       notes: form.notes,
     });
     if (!ok) { setSaving(false); return setErr("Failed to submit. Please try again."); }
+
+    // Send email notification via mailto (opens email app) if notification email is set
+    const notifEmail = await dbGetSetting("service_notification_email");
+    if (notifEmail) {
+      const serviceName = form.service === "haircut" ? "Haircut" : form.service;
+      const estate = ESTATES.find(e => e.id === user.estateId);
+      const subject = encodeURIComponent("New Service Request — " + serviceName);
+      const body = encodeURIComponent(
+        "New service request received on Upsidian.\n\n" +
+        "Service: " + serviceName + "\n" +
+        "Resident: " + user.name + " (" + user.email + ")\n" +
+        "Unit: " + (user.unitName || "-") + "\n" +
+        "Estate: " + (estate ? estate.name : user.estateId) + "\n" +
+        "Date: " + form.date + "\n" +
+        "Time: " + form.hour + ":" + form.min + " WAT\n" +
+        (form.notes ? "Notes: " + form.notes + "\n" : "") +
+        "\nLog in to the admin panel to manage this request."
+      );
+      window.open("mailto:" + notifEmail + "?subject=" + subject + "&body=" + body);
+    }
+
     const updated = await dbGetServiceRequests(user.email);
     setRequests(updated);
-    setSuccess("Request submitted! You will be contacted to confirm.");
+    setSuccess("Request submitted! You will be contacted to confirm your appointment.");
     setFormOpen(false);
     setSaving(false);
     setForm({ service:"", date:todayStr, hour:String(today.getHours()).padStart(2,"0"), min:String(today.getMinutes()).padStart(2,"0"), notes:"" });
+  };
+
+  const handleDelete = async (id) => {
+    await dbDeleteServiceRequest(id);
+    setRequests(prev => prev.filter(r => r.id !== id));
   };
 
   const statusColor = (s) => s === "confirmed" ? "#6bff6b" : s === "cancelled" ? "#ff6b6b" : "#c8860a";
@@ -1936,15 +1991,23 @@ function ServicesView({ user }) {
         requests.map(r => (
           <div key={r.id} style={{ background:"#141414", border:"1px solid #1e1e1e", borderRadius:12, padding:14, marginBottom:10 }}>
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 }}>
-              <div style={{ fontWeight:700, fontSize:14, color:"#fff", textTransform:"capitalize" }}>
+              <div style={{ fontWeight:700, fontSize:14, color:"#fff" }}>
                 {r.service_type === "haircut" ? "✂️ Haircut" : r.service_type}
               </div>
-              <span style={{ fontSize:10, fontWeight:700, padding:"3px 10px", borderRadius:20, border:"1px solid", color:statusColor(r.status), borderColor:statusColor(r.status), background:"transparent" }}>
-                {r.status.toUpperCase()}
-              </span>
+              <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                <span style={{ fontSize:10, fontWeight:700, padding:"3px 10px", borderRadius:20, border:"1px solid", color:statusColor(r.status), borderColor:statusColor(r.status), background:"transparent" }}>
+                  {r.status.toUpperCase()}
+                </span>
+                {r.status !== "confirmed" && (
+                  <button onClick={() => handleDelete(r.id)}
+                    style={{ background:"none", border:"none", color:"#444", fontSize:11, cursor:"pointer", letterSpacing:0.3 }}>
+                    ✕
+                  </button>
+                )}
+              </div>
             </div>
             <div style={{ fontSize:12, color:"#555" }}>
-              {new Date(r.date).toLocaleDateString("en-NG", { day:"numeric", month:"short", year:"numeric" })} at {r.time} WAT
+              {new Date(r.date + "T00:00:00").toLocaleDateString("en-NG", { day:"numeric", month:"short", year:"numeric" })} at {r.time} WAT
             </div>
             {r.notes && <div style={{ fontSize:12, color:"#444", marginTop:4 }}>{r.notes}</div>}
           </div>
@@ -2725,6 +2788,9 @@ function AdminPanel({ onExit }) {
   const [userEstateFilter, setUserEstateFilter] = useState(""); // filter users by estate
   const [confirmDeleteUser, setConfirmDeleteUser] = useState(null); // email of user pending delete
   const [messages, setMessages]         = useState([]);
+  const [serviceReqs, setServiceReqs]   = useState([]);
+  const [notifEmail, setNotifEmail]     = useState("");
+  const [notifSaved, setNotifSaved]     = useState(false);
   const [loading, setLoading]     = useState(false);
   const [msg, setMsg]             = useState("");
 
@@ -2789,8 +2855,13 @@ function AdminPanel({ onExit }) {
 
   const load = async () => {
     setLoading(true);
-    const [e, u, m] = await Promise.all([dbGetEstates(), dbGetAllUsersAdmin(), dbGetMessages()]);
+    const [e, u, m, sr, ne] = await Promise.all([
+      dbGetEstates(), dbGetAllUsersAdmin(), dbGetMessages(),
+      dbGetAllServiceRequests(), dbGetSetting("service_notification_email"),
+    ]);
     setEstates(e); setUsers(u); setMessages(m);
+    setServiceReqs(sr);
+    setNotifEmail(ne || "");
     ESTATES.length = 0; ESTATES.push(...e);
     setLoading(false);
   };
@@ -2928,6 +2999,7 @@ function AdminPanel({ onExit }) {
           { id:"estates",   label:"Estates" },
           { id:"residents", label:"Access" },
           { id:"users",     label:"Users" },
+          { id:"services",  label: serviceReqs.filter(r => r.status === "pending").length > 0 ? "Services (" + serviceReqs.filter(r => r.status === "pending").length + ")" : "Services" },
           { id:"messages",  label: messages.filter(m => m.status === "open").length > 0 ? "Messages (" + messages.filter(m => m.status === "open").length + ")" : "Messages" },
         ].map(t => (
           <button key={t.id} style={a.tab(view === t.id)} onClick={() => setView(t.id)}>
@@ -3103,6 +3175,88 @@ function AdminPanel({ onExit }) {
               )}
             </>
           )}
+        </div>
+      )}
+
+      {/* ── SERVICES TAB ── */}
+      {view === "services" && (
+        <div>
+          {/* Notification email setting */}
+          <div style={a.card}>
+            <div style={a.section}>Notification Email</div>
+            <div style={{ fontSize:12, color:"#555", marginBottom:10 }}>
+              Every new service request will trigger an email to this address.
+            </div>
+            <div style={{ display:"flex", gap:8 }}>
+              <input
+                value={notifEmail}
+                onChange={e => { setNotifEmail(e.target.value); setNotifSaved(false); }}
+                placeholder="e.g. services@youremail.com"
+                style={{ ...a.input, marginBottom:0, flex:1 }}
+              />
+              <button style={a.btn} onClick={async () => {
+                await dbSetSetting("service_notification_email", notifEmail.trim());
+                setNotifSaved(true);
+                setTimeout(() => setNotifSaved(false), 2500);
+              }}>
+                {notifSaved ? "Saved ✓" : "Save"}
+              </button>
+            </div>
+          </div>
+
+          {/* Service requests list */}
+          <div style={a.card}>
+            <div style={a.section}>
+              Service Requests ({serviceReqs.filter(r => r.status === "pending").length} pending)
+            </div>
+            {serviceReqs.length === 0 ? (
+              <div style={{ color:"#555", fontSize:13 }}>No service requests yet.</div>
+            ) : (
+              serviceReqs.map(r => {
+                const sColor = r.status === "confirmed" ? "#6bff6b" : r.status === "cancelled" ? "#ff6b6b" : "#c8860a";
+                const estate = ESTATES.find(e => e.id === r.estate_id);
+                return (
+                  <div key={r.id} style={{ padding:"12px 0", borderBottom:"1px solid #1a1a1a" }}>
+                    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:6 }}>
+                      <div>
+                        <div style={{ fontSize:13, fontWeight:600, color:"#e0e0e0" }}>
+                          {r.service_type === "haircut" ? "✂️ Haircut" : r.service_type}
+                        </div>
+                        <div style={{ fontSize:11, color:"#444", marginTop:2 }}>
+                          {r.resident_name} &middot; {r.unit_name || "—"} &middot; {estate ? estate.name : r.estate_id}
+                        </div>
+                        <div style={{ fontSize:11, color:"#333", marginTop:1 }}>
+                          {r.date} at {r.time} WAT
+                        </div>
+                        {r.notes && <div style={{ fontSize:11, color:"#444", marginTop:2, fontStyle:"italic" }}>{r.notes}</div>}
+                      </div>
+                      <span style={{ fontSize:10, fontWeight:700, padding:"3px 8px", borderRadius:20, color:sColor, border:"1px solid " + sColor, whiteSpace:"nowrap" }}>
+                        {r.status.toUpperCase()}
+                      </span>
+                    </div>
+                    <div style={{ display:"flex", gap:8, marginTop:8 }}>
+                      {r.status !== "confirmed" && (
+                        <button style={a.btnSm} onClick={async () => {
+                          await dbUpdateServiceStatus(r.id, "confirmed");
+                          setServiceReqs(prev => prev.map(x => x.id === r.id ? { ...x, status:"confirmed" } : x));
+                        }}>✓ Confirm</button>
+                      )}
+                      {r.status !== "cancelled" && (
+                        <button style={a.btnSm} onClick={async () => {
+                          await dbUpdateServiceStatus(r.id, "cancelled");
+                          setServiceReqs(prev => prev.map(x => x.id === r.id ? { ...x, status:"cancelled" } : x));
+                        }}>✕ Cancel</button>
+                      )}
+                      <button style={a.btnRed} onClick={async () => {
+                        await dbDeleteServiceRequest(r.id);
+                        setServiceReqs(prev => prev.filter(x => x.id !== r.id));
+                      }}>Delete</button>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
         </div>
       )}
 
