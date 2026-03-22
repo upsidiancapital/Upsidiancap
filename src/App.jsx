@@ -1058,12 +1058,8 @@ function ResidentApp({ user, onLogout, onUserUpdate }) {
     const mo     = String(now.getMonth() + 1).padStart(2, "0");
     const d      = String(now.getDate()).padStart(2, "0");
     // Round current minute up to nearest 15
-    const rawMin = now.getMinutes();
-    const rMin   = Math.ceil(rawMin / 15) * 15;
-    const fromH  = rMin === 60
-      ? String((now.getHours() + 1) % 24).padStart(2, "0")
-      : String(now.getHours()).padStart(2, "0");
-    const fromM  = rMin === 60 ? "00" : String(rMin).padStart(2, "0");
+    const fromH  = String(now.getHours()).padStart(2, "0");
+    const fromM  = String(now.getMinutes()).padStart(2, "0");
     // End time = start + 1hr
     const toH    = String((Number(fromH) + 1) % 24).padStart(2, "0");
     const toM    = fromM;
@@ -1129,9 +1125,8 @@ function ResidentApp({ user, onLogout, onUserUpdate }) {
     setCodeModal(newInvite);
     // Reset form but keep today's defaults
     const now2   = nowNigeria();
-    const rMin2  = Math.ceil(now2.getMinutes() / 15) * 15;
-    const fromH2 = rMin2 === 60 ? String((now2.getHours()+1)%24).padStart(2,"0") : String(now2.getHours()).padStart(2,"0");
-    const fromM2 = rMin2 === 60 ? "00" : String(rMin2).padStart(2,"0");
+    const fromH2 = String(now2.getHours()).padStart(2,"0");
+    const fromM2 = String(now2.getMinutes()).padStart(2,"0");
     setInviteForm({
       guestName:"", purpose:"",
       day: String(now2.getDate()).padStart(2,"0"),
@@ -1507,10 +1502,10 @@ function ResidentApp({ user, onLogout, onUserUpdate }) {
                 style={{ flex:1, padding:"12px 8px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontSize:14, color: inviteForm.fromMin ? "#fff" : "#555" }}
               >
                 <option value="">Min</option>
-                <option value="00">00</option>
-                <option value="15">15</option>
-                <option value="30">30</option>
-                <option value="45">45</option>
+                {Array.from({length:60},(_,i)=>{
+                  const m = String(i).padStart(2,"0");
+                  return <option key={m} value={m}>{m}</option>;
+                })}
               </select>
             </div>
 
@@ -1535,10 +1530,10 @@ function ResidentApp({ user, onLogout, onUserUpdate }) {
                 style={{ flex:1, padding:"12px 8px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontSize:14, color: inviteForm.toMin ? "#fff" : "#555" }}
               >
                 <option value="">Min</option>
-                <option value="00">00</option>
-                <option value="15">15</option>
-                <option value="30">30</option>
-                <option value="45">45</option>
+                {Array.from({length:60},(_,i)=>{
+                  const m = String(i).padStart(2,"0");
+                  return <option key={m} value={m}>{m}</option>;
+                })}
               </select>
             </div>
             <div style={{ fontSize:11, color:"#333", marginBottom:16, lineHeight:1.6 }}>
@@ -2163,7 +2158,7 @@ function SecurityAppWithProfile({ user, onLogout, onUserUpdate }) {
         };
         await dbAddLogEntry(entry);
         setAccessLog(prev => [entry, ...prev]);
-        setGateResult({ type:"staffGranted", staff: staffMember });
+        setGateResult({ type:"staffGranted", staff: staffMember, entryTime: new Date().toLocaleTimeString("en-NG", { timeZone:"Africa/Lagos", hour:"2-digit", minute:"2-digit", second:"2-digit" }) + " WAT" });
       }
       setGateCode("");
       setLoading(false);
@@ -2332,7 +2327,7 @@ function SecurityAppWithProfile({ user, onLogout, onUserUpdate }) {
                         ["Type",    "Registered Staff"],
                         ["Unit",    gateResult.staff.resident_unit || "—"],
                         ["Code",    gateResult.staff.code],
-                        ["Entry",   new Date().toLocaleTimeString("en-NG", { timeZone:"Africa/Lagos", hour:"2-digit", minute:"2-digit", second:"2-digit" }) + " WAT"],
+                        ["Entry",   gateResult.entryTime || "—"],
                         ["Access",  "Permanent — Active"],
                       ].map(([k, v]) => (
                         <div key={k} style={{ fontSize:13, color:"#888", marginBottom:4 }}>
